@@ -323,7 +323,7 @@ def main():
         xx, yy = torch.meshgrid(x_pred, y_pred, indexing='ij')
         xx_flat = xx.flatten()
         yy_flat = yy.flatten()
-        tt = torch.zeros_like(xx_flat)  # Predicting at time t = 0
+        tt = torch.ones_like(xx_flat)  # Predicting at time t = 0
 
         # Filter out points inside the circle
         mask = ~inside_circle(xx_flat, yy_flat)
@@ -380,7 +380,7 @@ def main():
         save_dir = os.path.join("figures")  # Adjust this path as necessary
         if not os.path.isdir(save_dir):
             os.makedirs(save_dir)
-        plt.savefig(os.path.join(save_dir, "code01.png"))
+        plt.savefig(os.path.join(save_dir, "code02_10.png"))
 
 if __name__ == "__main__":
     main()
