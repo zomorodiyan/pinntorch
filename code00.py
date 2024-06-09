@@ -164,7 +164,7 @@ def main():
         plt.ylabel('y')
         plt.xlabel('x')
         plt.ylabel('y')
-        plt.savefig("plot.png")
+        plt.savefig("code00.png")
             
 if __name__ == "__main__":
     main()
