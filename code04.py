@@ -54,6 +54,8 @@ class PINN(nn.Module):
         self.omega_out = nn.Linear(20, 1)
         self.c_out = nn.Linear(20, 1)  # Output for concentration
 
+        self._initialize_weights()
+
     def forward(self, x):
         x = torch.tanh(self.fc1(x))
         x = torch.tanh(self.fc2(x))
@@ -66,12 +68,42 @@ class PINN(nn.Module):
         c = self.c_out(x)
         return u, v, p, k, omega, c
 
+    def _initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+
+def smooth_maximum(a, b, alpha=10):
+    b = b.expand_as(a)  # Ensure b has the same shape as a
+    return torch.logsumexp(torch.stack([a, b], dim=0) * alpha, dim=0) / alpha
+
+def smooth_minimum(a, b, alpha=10):
+    b = b.expand_as(a)  # Ensure b has the same shape as a
+    return -torch.logsumexp(torch.stack([-a, -b], dim=0) * alpha, dim=0) / alpha
+
+def smooth_conditional(cond, true_val, false_val, alpha=10):
+    true_val = true_val.expand_as(cond)  # Ensure true_val has the same shape as cond
+    false_val = false_val.expand_as(cond)  # Ensure false_val has the same shape as cond
+    return cond.sigmoid() * true_val + (1 - cond.sigmoid()) * false_val
+
+def safe_sqrt(tensor, epsilon=1e-10):
+    return torch.sqrt(tensor + epsilon)
+
+def ensure_positive(tensor, epsilon=1e-10):
+    print("ensure_positive")
+    return torch.nn.functional.relu(tensor) + epsilon
+
+
 # Define the PDE residuals for the SST k-omega model and convection-diffusion equation
 def pde_residuals(model, x, y, t, Re, theta):
     x.requires_grad_(True)
     y.requires_grad_(True)
     t.requires_grad_(True)
+    Re.requires_grad_(True)
     u, v, p, k, omega, c = model(torch.cat([x, y, t, Re, theta], dim=1))
+
 
     # Compute first-order derivatives
     u_x = torch.autograd.grad(u, x, grad_outputs=torch.ones_like(u), create_graph=True)[0]
@@ -92,17 +124,16 @@ def pde_residuals(model, x, y, t, Re, theta):
     c_y = torch.autograd.grad(c, y, grad_outputs=torch.ones_like(c), create_graph=True)[0]
     c_t = torch.autograd.grad(c, t, grad_outputs=torch.ones_like(c), create_graph=True)[0]
 
-    y_hat = torch.sqrt(x ** 2 + y ** 2) - 40 / L_star  # non-dim(distance) - radius/L_star
-    D_omega_plus = torch.maximum((2 / (sigma_omega2 * omega)) * (k_x * omega_x + k_y * omega_y), torch.tensor(1e-10, device=x.device))
-    k = torch.maximum(k, torch.tensor(1e-10, device=x.device))  # Ensure k is positive
-
-    phi_11 = torch.sqrt(k) / (0.09 * omega * y_hat)
+    y_hat = safe_sqrt(x ** 2 + y ** 2) - 40 / L_star  # non-dim(distance) - radius/L_star
+    D_omega_plus = smooth_maximum((2 / (sigma_omega2 * omega)) * (k_x * omega_x + k_y * omega_y), torch.tensor(1e-10, device=x.device))
+    #k = ensure_positive(k) # smoothly clips negative values
+    phi_11 = safe_sqrt(k) / (0.09 * omega * y_hat)
     phi_12 = 500 / (Re * y_hat ** 2 * omega)
     phi_13 = 4 * k / (sigma_omega2 * D_omega_plus * y_hat ** 2)
-    phi_1 = torch.minimum(torch.maximum(phi_11, phi_12), phi_13)
-    phi_21 = (2 * torch.sqrt(k)) / (0.09 * omega * y_hat)
+    phi_1 = smooth_minimum(smooth_maximum(phi_11, phi_12), phi_13)
+    phi_21 = (2 * safe_sqrt(k)) / (0.09 * omega * y_hat)
     phi_22 = 500 / (Re * y_hat ** 2 * omega)
-    phi_2 = torch.maximum(phi_21, phi_22)
+    phi_2 = smooth_maximum(phi_21, phi_22)
 
     F1 = torch.tanh(phi_1 ** 4)
     F2 = torch.tanh(phi_2)
@@ -118,35 +149,38 @@ def pde_residuals(model, x, y, t, Re, theta):
     alpha_star = alpha_star_infinity * (alpha_star_0 + Re_t / R_k) / (1 + Re_t / R_k)
     alpha = (alpha_infinity / alpha_star) * ((alpha_0 + Re_t / R_omega) / (1 + Re_t / R_omega))
     beta_star_i = beta_star_infinity * ((4 / 15 + (Re_t / R_beta) ** 4) / (1 + (Re_t / R_beta) ** 4))
-    M_t = U_star * torch.sqrt(2 * k / (gamma * R * T))
-    F_Mt = torch.where(M_t <= M_t0, torch.zeros_like(M_t), M_t ** 2 - M_t0 ** 2)
+    M_t = U_star * safe_sqrt(2 * k / (gamma * R * T))
+    F_Mt = smooth_conditional(M_t<=M_t0, torch.zeros_like(M_t), M_t ** 2 - M_t0 ** 2)
 
     beta_star = beta_star_i * (1 + xi_star * F_Mt)
     beta = beta_i * (1 - beta_star_i / beta_i * xi_star * F_Mt)
     sigma_k = 1 / (F1 / sigma_k1 + (1 - F1) / sigma_k2)
     sigma_omega = 1 / (F1 / sigma_omega1 + (1 - F1) / sigma_omega2)
-    S = torch.sqrt(2 * ((u_x) ** 2 + (v_y) ** 2 + 0.5 * (u_y + v_x) ** 2))
+    S = safe_sqrt(2 * ((u_x) ** 2 + (v_y) ** 2 + 0.5 * (u_y + v_x) ** 2))
 
-    mu_t = k / omega * (1 / torch.maximum(1 / alpha_star, S * F2 / (a1 * omega)))
+    mu_t = k / omega * (1 / smooth_maximum(1 / alpha_star, S * F2 / (a1 * omega)))
     G_k = mu_t * S ** 2
     Y_k = beta_star * k * omega
-    G_k_tilde = torch.minimum(G_k, 10 * beta_star * k * omega)
+    G_k_tilde = smooth_minimum(G_k, 10 * beta_star * k * omega)
 
     G_omega = alpha / mu_t * G_k_tilde
     Y_omega = beta * omega ** 2
     D_omega = 2 * (1 - F1) * (sigma_omega2 / omega) * (k_x * omega_x + k_y * omega_y)
 
     continuity_residual = u_x + v_y
+    x_mom_gradx = torch.autograd.grad((1/Re+mu_t)*(4/3*u_x-2/3*v_y), x, grad_outputs=torch.ones_like(u_x), create_graph=True)[0]
+    x_mom_grady = torch.autograd.grad((1/Re+mu_t)*(v_x+u_y), y, grad_outputs=torch.ones_like(u_x), create_graph=True)[0]
+    x_momentum_residual = u_t + u * u_x + v * u_y + p_x - x_mom_gradx - x_mom_grady
 
-    # Compute second-order derivatives for the correct K-transport and omega-transport equations
+    y_mom_grady = torch.autograd.grad((1/Re+mu_t)*(4/3*v_y-2/3*u_x), y, grad_outputs=torch.ones_like(v_y), create_graph=True)[0]
+    y_mom_gradx = torch.autograd.grad((1/Re+mu_t)*(v_x+u_y), x, grad_outputs=torch.ones_like(v_y), create_graph=True)[0]
+    y_momentum_residual = v_t + u * v_x + v * v_y + p_y - y_mom_grady - y_mom_gradx
+
     k_transport_term1 = torch.autograd.grad((1 / Re + mu_t / sigma_k) * k_x, x, grad_outputs=torch.ones_like(k_x), create_graph=True)[0]
     k_transport_term2 = torch.autograd.grad((1 / Re + mu_t / sigma_k) * k_y, y, grad_outputs=torch.ones_like(k_y), create_graph=True)[0]
+    k_residual = k_t + u * k_x + v * k_y - k_transport_term1 - k_transport_term2 - G_k + Y_k
     omega_transport_term1 = torch.autograd.grad((1 / Re + mu_t / sigma_omega) * omega_x, x, grad_outputs=torch.ones_like(omega_x), create_graph=True)[0]
     omega_transport_term2 = torch.autograd.grad((1 / Re + mu_t / sigma_omega) * omega_y, y, grad_outputs=torch.ones_like(omega_y), create_graph=True)[0]
-
-    x_momentum_residual = u_t + u * u_x + v * u_y + p_x - k_transport_term1 - k_transport_term2
-    y_momentum_residual = v_t + u * v_x + v * v_y + p_y - omega_transport_term1 - omega_transport_term2
-    k_residual = k_t + u * k_x + v * k_y - k_transport_term1 - k_transport_term2 - G_k + Y_k
     omega_residual = omega_t + u * omega_x + v * omega_y - omega_transport_term1 - omega_transport_term2 - G_omega + Y_omega - D_omega
     c_residual = c_t + u * c_x + v * c_y - (1 / Re) * (c_x + c_y)  # Convection-diffusion equation
 
@@ -172,12 +206,6 @@ def loss(model, x, y, t, Re, theta, boundary_conditions, initial_conditions, spa
         x_b, y_b, t_b, Re_b, theta_b, conditions = bc
         x_b.requires_grad_(True)
         y_b.requires_grad_(True)
-        # For debugging, print shapes and devices of tensors
-        print(f"x_b shape: {x_b.shape}, device: {x_b.device}")
-        print(f"y_b shape: {y_b.shape}, device: {y_b.device}")
-        print(f"t_b shape: {t_b.shape}, device: {t_b.device}")
-        print(f"Re_b shape: {Re_b.shape}, device: {Re_b.device}")
-        print(f"theta_b shape: {theta_b.shape}, device: {theta_b.device}")
         u_pred, v_pred, p_pred, k_pred, omega_pred, c_pred = model(torch.cat([x_b, y_b, t_b, Re_b, theta_b], dim=1))
 
         for variable, condition in conditions.items():
@@ -269,7 +297,6 @@ def generate_boundary_initial_conditions(device):
     theta_in = torch.zeros_like(x_in).to(device)
     u_in = torch.full((400, 1), 9.0).to(device)
     v_in = torch.zeros_like(x_in).to(device)
-    p_in = torch.full((400, 1), np.nan).to(device)  # p is missing
     k_in = torch.ones_like(x_in).to(device)  # Specified value
     omega_in = torch.ones_like(x_in).to(device)  # Specified value
     c_in = torch.zeros_like(x_in).to(device)  # Concentration
@@ -310,7 +337,6 @@ def generate_boundary_initial_conditions(device):
     theta_wall = torch.zeros_like(x_wall).to(device)
     u_wall = torch.zeros_like(x_wall).to(device)
     v_wall = torch.zeros_like(x_wall).to(device)
-    p_wall = torch.full((200, 1), np.nan).to(device)  # p is not specified
     k_wall = torch.zeros_like(x_wall).to(device)  # u, v, k are zero
     omega_wall = torch.ones_like(x_wall).to(device)  # Specified value
     c_wall = torch.zeros_like(x_wall).to(device)  # Concentration
@@ -335,7 +361,6 @@ def generate_boundary_initial_conditions(device):
         (x_in, y_in, t_in, Re_in, theta_in, {
             'u': {'type': 'Dirichlet', 'value': u_in},
             'v': {'type': 'Dirichlet', 'value': v_in},
-            'p': {'type': 'Dirichlet', 'value': p_in},
             'k': {'type': 'Dirichlet', 'value': k_in},
             'omega': {'type': 'Dirichlet', 'value': omega_in},
             'c': {'type': 'Dirichlet', 'value': c_in}
@@ -367,7 +392,6 @@ def generate_boundary_initial_conditions(device):
         (x_wall, y_wall, t_wall, Re_wall, theta_wall, {
             'u': {'type': 'Dirichlet', 'value': u_wall},
             'v': {'type': 'Dirichlet', 'value': v_wall},
-            'p': {'type': 'Dirichlet', 'value': p_wall},
             'k': {'type': 'Dirichlet', 'value': k_wall},
             'omega': {'type': 'Dirichlet', 'value': omega_wall},
             'c': {'type': 'Dirichlet', 'value': c_wall}
@@ -443,8 +467,6 @@ def main():
     # Generate sparse data
     sparse_data = generate_sparse_data(device)
     shapes = [d.shape for d in sparse_data]
-    print('shapes:')
-    print(shapes)
 
 
     # Combine all data points
@@ -453,21 +475,12 @@ def main():
     for epoch in range(1000):
         # Randomly select a subset of collocation points and sparse data for this training step
         subset_indices = torch.randperm(13029)[:1000]
-        print('subset_indices(max, min):')
-        print(subset_indices.max(), subset_indices.min())
         x_subset = x[subset_indices]
         y_subset = y[subset_indices]
         t_subset = t[subset_indices]
         Re_subset = Re[subset_indices]
         theta_subset = theta[subset_indices]
-        print('type(subset_indices), type(sparse_data)')
-        print(type(subset_indices), type(sparse_data))
-        for d in sparse_data:
-            if subset_indices.max() >= d.numel() or subset_indices.min() < 0:
-                print("Index out of bounds for tensor with shape:", d.shape)
-        sparse_data_subset = [d.squeeze()[subset_indices] for d in sparse_data]
-
-
+        sparse_data_subset = [d.squeeze()[subset_indices].unsqueeze(1) for d in sparse_data]
         loss_value = train_step(model, optimizer, x_subset, y_subset, t_subset, Re_subset, theta_subset, boundary_conditions, initial_conditions, sparse_data_subset)
         if epoch % 100 == 0:
             print(f'Epoch {epoch}, Loss: {loss_value}')
