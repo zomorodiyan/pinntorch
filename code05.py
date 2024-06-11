@@ -5,6 +5,8 @@ import torch.optim as optim
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.tri as tri
+import torch.nn.functional as F
+from utils import calculate_range_and_divergence
 
 # Define global constants for SST k-omega model
 a1 = 0.31
@@ -41,7 +43,8 @@ def inside_circle(x, y, center_x=0, center_y=0, radius=40):
     return (x - center_x) ** 2 + (y - center_y) ** 2 < radius ** 2
 
 def get_dataset():
-    data = np.load("data/ns_unsteady.npy", allow_pickle=True).item()
+    file = "data/ns_unsteady.npy"
+    data = np.load(file, allow_pickle=True).item()
     u_ref = np.array(data["u"].astype(float))
     v_ref = np.array(data["v"].astype(float))
     p_ref = np.array(data["p"].astype(float))
@@ -230,7 +233,9 @@ def loss(model, x, y, t, Re, theta, boundary_conditions, initial_conditions, spa
     loss_c = torch.mean(c_residual ** 2)
 
     total_loss = loss_continuity + loss_x_momentum + loss_y_momentum + loss_k + loss_omega + loss_c
+    total_loss_pde = loss_continuity + loss_x_momentum + loss_y_momentum + loss_k + loss_omega + loss_c
 
+    total_loss_bc = 0 # initialize total_loss_bc
     # Boundary conditions
     for bc in boundary_conditions:
         x_b, y_b, t_b, Re_b, theta_b, conditions = bc
@@ -283,8 +288,9 @@ def loss(model, x, y, t, Re, theta, boundary_conditions, initial_conditions, spa
                     elif variable == 'c':
                         deriv = torch.autograd.grad(c_pred, y_b, grad_outputs=torch.ones_like(c_pred), create_graph=True)[0]
                 loss_bc = torch.mean((deriv - value) ** 2)
-
             total_loss += loss_bc
+            total_loss_bc += loss_bc
+
 
     # Initial conditions
     x_0, y_0, t_0, Re_0, theta_0, u_0, v_0, p_0, k_0, omega_0, c_0 = initial_conditions
@@ -292,11 +298,18 @@ def loss(model, x, y, t, Re, theta, boundary_conditions, initial_conditions, spa
     loss_ic = torch.mean((u_0_pred - u_0) ** 2) + torch.mean((v_0_pred - v_0) ** 2) + torch.mean((p_0_pred - p_0) ** 2) + torch.mean((k_0_pred - k_0) ** 2) + torch.mean((omega_0_pred - omega_0) ** 2) + torch.mean((c_0_pred - c_0) ** 2)
     total_loss += loss_ic
 
+
+
     # Sparse data
     x_sparse, y_sparse, t_sparse, Re_sparse, theta_sparse, u_sparse, v_sparse, p_sparse, k_sparse, omega_sparse, c_sparse = sparse_data
     u_sparse_pred, v_sparse_pred, p_sparse_pred, k_sparse_pred, omega_sparse_pred, c_sparse_pred = model(torch.cat([x_sparse, y_sparse, t_sparse, Re_sparse, theta_sparse], dim=1))
     loss_sparse = torch.mean((u_sparse_pred - u_sparse) ** 2) + torch.mean((v_sparse_pred - v_sparse) ** 2) + torch.mean((p_sparse_pred - p_sparse) ** 2) + torch.mean((k_sparse_pred - k_sparse) ** 2) + torch.mean((omega_sparse_pred - omega_sparse) ** 2) + torch.mean((c_sparse_pred - c_sparse) ** 2)
     total_loss += loss_sparse
+
+    print('....................  loss values  .......................')
+    print('total_loss, loss_sparse, loss_ic, loss_bc, total_loss_pde')
+    print(total_loss.item(), loss_sparse.item(), loss_ic.item(),
+          loss_bc.item(), total_loss_pde.item())
 
     return total_loss
 
@@ -315,31 +328,43 @@ def save_model(model, path):
 # Load model weights
 def load_model(model, path, device):
     model.load_state_dict(torch.load(path, map_location=device))
-'''
-# Generate initial conditions
-def generate_initial_conditions(device):
-    # Initial conditions (similar to boundary conditions)
-    x_0 = torch.linspace(-200, 600, 200).to(device)
-    y_0 = torch.linspace(-200, 200, 100).to(device)
-    x_0, y_0 = torch.meshgrid(x_0, y_0, indexing='ij')
-    x_0 = x_0.flatten().unsqueeze(1).to(device)
-    y_0 = y_0.flatten().unsqueeze(1).to(device)
-    t_0 = torch.zeros_like(x_0).to(device)
-    Re_0 = torch.full_like(x_0, Re_medium).to(device)
-    theta_0 = torch.zeros_like(x_0).to(device)
-    u_0 = torch.zeros_like(x_0).to(device)
-    v_0 = torch.zeros_like(x_0).to(device)
-    p_0 = torch.zeros_like(x_0).to(device)
-    k_0 = torch.zeros_like(x_0).to(device)
-    omega_0 = torch.zeros_like(x_0).to(device)
-    c_0 = torch.zeros_like(x_0).to(device)
-    initial_conditions = (x_0, y_0, t_0, Re_0, theta_0, u_0, v_0, p_0, k_0, omega_0, c_0)
 
-    return initial_conditions
-'''
-
-def generate_initial_conditions(device):
+def get_nondim_dataset():
     u_ref, v_ref, p_ref, k_ref, omega_ref, coords, _, _, _, _, _ = get_dataset()
+
+    U_star = 9.0 # for sim. 0
+    L_star = 80.0 # for sim. 0
+    T_star = L_star / U_star
+
+    coords = coords / L_star
+    u_ref = u_ref / U_star
+    v_ref = v_ref / U_star
+    p_ref = p_ref / U_star**2
+    k_ref = k_ref / U_star**2
+    omega_ref = omega_ref * L_star / U_star
+
+    # clip negative & extreme values
+    k_ref = np.clip(k_ref, 0.0, None)
+    omega_ref = np.clip(omega_ref, 0.0, 2*L_star/U_star)
+
+    return (
+        u_ref,
+        v_ref,
+        p_ref,
+        k_ref, #me
+        omega_ref, #me
+        coords
+    )
+
+def generate_initial_conditions(device):
+    u_ref, v_ref, p_ref, k_ref, omega_ref, coords = get_nondim_dataset()
+
+    calculate_range_and_divergence(u_ref,'u_ref')
+    calculate_range_and_divergence(v_ref,'v_ref')
+    calculate_range_and_divergence(p_ref,'p_ref')
+    calculate_range_and_divergence(k_ref,'k_ref')
+    calculate_range_and_divergence(omega_ref,'omega_ref')
+    calculate_range_and_divergence(coords,'coords')
 
     x_0 = torch.tensor(coords[:, 0], dtype=torch.float32).unsqueeze(1).to(device)
     y_0 = torch.tensor(coords[:, 1], dtype=torch.float32).unsqueeze(1).to(device)
@@ -412,7 +437,6 @@ def generate_boundary_conditions(device):
     omega_wall = torch.ones_like(x_wall).to(device)  # Specified value
     c_wall = torch.zeros_like(x_wall).to(device)  # Concentration
 
-
     boundary_conditions = [
         (x_in, y_in, t_in, Re_in, theta_in, {
             'u': {'type': 'Dirichlet', 'value': u_in},
@@ -447,39 +471,10 @@ def generate_boundary_conditions(device):
         })
     ]
 
-
     return boundary_conditions
 
-'''
-# Generate sparse data
 def generate_sparse_data(device):
-    # Generate 13029 collocation points for x and y
-    x_sparse = torch.linspace(-200, 600, 101).to(device)
-    y_sparse = torch.linspace(-200, 200, 129).to(device)
-    x_sparse, y_sparse = torch.meshgrid(x_sparse, y_sparse, indexing='ij')
-    x_sparse = x_sparse.flatten().unsqueeze(1).to(device)
-    y_sparse = y_sparse.flatten().unsqueeze(1).to(device)
-
-    # Generate random t values between 1 and 100
-    t_sparse = torch.randint(1, 101, (13029, 1)).float().to(device)
-
-    # Generate random values for Re and theta
-    Re_sparse = torch.full_like(x_sparse, Re_medium).to(device)
-    theta_sparse = torch.zeros_like(x_sparse).to(device)
-
-    # Generate random values for u, v, p, k, omega, and c
-    u_sparse = torch.rand_like(x_sparse).to(device)
-    v_sparse = torch.rand_like(x_sparse).to(device)
-    p_sparse = torch.rand_like(x_sparse).to(device)
-    k_sparse = torch.rand_like(x_sparse).to(device)
-    omega_sparse = torch.rand_like(x_sparse).to(device)
-    c_sparse = torch.rand_like(x_sparse).to(device)
-
-    return x_sparse, y_sparse, t_sparse, Re_sparse, theta_sparse, u_sparse, v_sparse, p_sparse, k_sparse, omega_sparse, c_sparse
-'''
-
-def generate_sparse_data(device):
-    u_ref, v_ref, p_ref, k_ref, omega_ref, coords, _, _, _, _, _ = get_dataset()
+    u_ref, v_ref, p_ref, k_ref, omega_ref, coords = get_nondim_dataset()
     x_sparse = torch.tensor(coords[:, 0], dtype=torch.float32).repeat(u_ref.shape[0]).unsqueeze(1).to(device)
     y_sparse = torch.tensor(coords[:, 1], dtype=torch.float32).repeat(u_ref.shape[0]).unsqueeze(1).to(device)
     t_sparse = torch.arange(1.0, u_ref.shape[0] + 1.0).repeat_interleave(u_ref.shape[1]).unsqueeze(1).to(device)
@@ -550,11 +545,10 @@ def main():
     sparse_data = generate_sparse_data(device)
     shapes = [d.shape for d in sparse_data]
 
-
     # Combine all data points
     all_data = torch.cat([x, y, t, Re, theta], dim=1)
 
-    for epoch in range(100000):
+    for epoch in range(1000):
         # Randomly select a subset of collocation points and sparse data for this training step
         subset_indices = torch.randperm(13001*2)[:1000]
         x_subset = x[subset_indices]
@@ -564,15 +558,15 @@ def main():
         theta_subset = theta[subset_indices]
         sparse_data_subset = [d.squeeze()[subset_indices].unsqueeze(1) for d in sparse_data]
         loss_value = train_step(model, optimizer, x_subset, y_subset, t_subset, Re_subset, theta_subset, boundary_conditions, initial_conditions, sparse_data_subset)
-        if epoch % 10000 == 0:
+        if epoch % 10 == 0:
             print(f'Epoch {epoch}, Loss: {loss_value}')
             save_model(model, 'pinn_model.pth')  # Save model at intervals
 
     # Plot the u field at time zero
     with torch.no_grad():
         # Generate a grid of points for prediction
-        x_pred = torch.linspace(-200, 600, 200).to(device)
-        y_pred = torch.linspace(-200, 200, 200).to(device)
+        x_pred = torch.linspace(-200/80, 600/80, 200).to(device)
+        y_pred = torch.linspace(-200/80, 200/80, 200).to(device)
         t_pred = torch.zeros(40000).to(device)  # Predicting at time t = 0
         Re_pred = torch.full_like(t_pred, Re_medium).to(device)
         theta_pred = torch.zeros_like(t_pred).to(device)
@@ -610,7 +604,7 @@ def main():
 
         # Mask the triangles inside the circle
         center = (0.0, 0.0)
-        radius = 40.0
+        radius = 40.0/80
 
         x_tri = xx_masked[triang.triangles].mean(axis=1)
         y_tri = yy_masked[triang.triangles].mean(axis=1)
@@ -654,7 +648,7 @@ def main():
         save_dir = os.path.join("figures")  # Adjust this path as necessary
         if not os.path.isdir(save_dir):
             os.makedirs(save_dir)
-        plt.savefig(os.path.join(save_dir, "code01.png"))
+        plt.savefig(os.path.join(save_dir, "code05.png"))
 
 if __name__ == "__main__":
     main()
