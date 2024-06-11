@@ -40,6 +40,36 @@ Re_medium = rho * U_star * L_star / mu
 def inside_circle(x, y, center_x=0, center_y=0, radius=40):
     return (x - center_x) ** 2 + (y - center_y) ** 2 < radius ** 2
 
+def get_dataset():
+    data = np.load("data/ns_unsteady.npy", allow_pickle=True).item()
+    print('u_ref: ', type(data["u"].astype(float)), data["u"].shape)
+    u_ref = np.array(data["u"].astype(float))
+    v_ref = np.array(data["v"].astype(float))
+    p_ref = np.array(data["p"].astype(float))
+    k_ref = np.array(data["k"].astype(float)) #me
+    omega_ref = np.array(data["omega"].astype(float)) #me
+    #t = np.array(data["t"])
+    coords = np.array(data["coords"])
+    inflow_coords = np.array(data["inflow_coords"].astype(float))
+    outflow_coords = np.array(data["outflow_coords"].astype(float))
+    symmetry_coords = np.array(data["symmetry_coords"].astype(float)) #me
+    cylinder_coords = np.array(data["cylinder_coords"].astype(float))
+    nu = np.array(data["nu"])
+
+    return (
+        u_ref,
+        v_ref,
+        p_ref,
+        k_ref, #me
+        omega_ref, #me
+        coords,
+        inflow_coords,
+        outflow_coords,
+        symmetry_coords, #me
+        cylinder_coords,
+        nu,
+    )
+
 # Define the neural network
 class PINN(nn.Module):
     def __init__(self):
@@ -290,15 +320,17 @@ def load_model(model, path, device):
 def generate_boundary_initial_conditions(device):
     # Velocity Inlet (Left Boundary: x = -200, -200 ≤ y ≤ 200)
     Re_medium = 1.225 * 9.0 * 80.0 / 1.7894e-5  # for now
+    k_in_value = 3/2*(0.05*9.0)**2/9.0**2 # for now
+    omega_in_value = (3/2*(0.05*9.0)**2/9.0**2)/(10*1.7894e-5/1.225) # for now
     x_in = torch.full((400, 1), -200.0).to(device)
     y_in = torch.linspace(-200, 200, 400).view(-1, 1).to(device)
     t_in = torch.zeros_like(x_in).to(device)
-    Re_in = torch.full((400, 1), Re_medium).to(device)
+    Re_in = torch.full((400, 1), Re_medium).to(device) # for now
     theta_in = torch.zeros_like(x_in).to(device)
-    u_in = torch.full((400, 1), 9.0).to(device)
-    v_in = torch.zeros_like(x_in).to(device)
-    k_in = torch.ones_like(x_in).to(device)  # Specified value
-    omega_in = torch.ones_like(x_in).to(device)  # Specified value
+    u_in = torch.full((400, 1), 1.0).to(device)
+    v_in = torch.zeros_like(u_in).to(device)
+    k_in = torch.full((400, 1), k_in_value).to(device) # for now
+    omega_in = torch.full((400, 1), omega_in_value).to(device) # for now
     c_in = torch.zeros_like(x_in).to(device)  # Concentration
 
     # Symmetry (Top and Bottom Boundaries: -200 ≤ x ≤ 600, y = ±200)
@@ -309,11 +341,10 @@ def generate_boundary_initial_conditions(device):
     Re_sym = torch.full((400, 1), Re_medium).to(device)
     theta_sym = torch.zeros_like(x_sym).to(device)
     u_sym = torch.zeros_like(x_sym).to(device)
-    v_sym = torch.zeros_like(x_sym).to(device)
+    v_sym = torch.zeros_like(x_sym).to(device) # for both neumann and dirichlet boundary conditions
     p_sym = torch.zeros_like(x_sym).to(device)
     k_sym = torch.zeros_like(x_sym).to(device)
     omega_sym = torch.zeros_like(x_sym).to(device)
-    c_sym = torch.zeros_like(x_sym).to(device)
 
     # Constant Pressure Outlet (Right Boundary: x = 600, -200 ≤ y ≤ 200)
     x_out = torch.full((400, 1), 600.0).to(device)
@@ -341,6 +372,41 @@ def generate_boundary_initial_conditions(device):
     omega_wall = torch.ones_like(x_wall).to(device)  # Specified value
     c_wall = torch.zeros_like(x_wall).to(device)  # Concentration
 
+
+    boundary_conditions = [
+        (x_in, y_in, t_in, Re_in, theta_in, {
+            'u': {'type': 'Dirichlet', 'value': u_in},
+            'v': {'type': 'Dirichlet', 'value': v_in},
+            'k': {'type': 'Dirichlet', 'value': k_in},
+            'omega': {'type': 'Dirichlet', 'value': omega_in},
+            'c': {'type': 'Dirichlet', 'value': c_in}
+        }),
+        (x_sym, y_sym_top, t_sym, Re_sym, theta_sym, {
+            'u': {'type': 'Neumann', 'dir_deriv': 'y', 'value': u_sym},
+            'v': {'type': 'Dirichlet', 'value': v_sym},
+            'v': {'type': 'Neumann', 'dir_deriv': 'y', 'value': v_sym},
+            'p': {'type': 'Neumann', 'dir_deriv': 'y', 'value': p_sym},
+            'k': {'type': 'Neumann', 'dir_deriv': 'y', 'value': k_sym},
+            'omega': {'type': 'Neumann', 'dir_deriv': 'y', 'value': omega_sym}
+        }),
+        (x_sym, y_sym_bottom, t_sym, Re_sym, theta_sym, {
+            'u': {'type': 'Neumann', 'dir_deriv': 'y', 'value': u_sym},
+            'v': {'type': 'Dirichlet', 'value': v_sym},
+            'v': {'type': 'Neumann', 'dir_deriv': 'y', 'value': v_sym},
+            'p': {'type': 'Neumann', 'dir_deriv': 'y', 'value': p_sym},
+            'k': {'type': 'Neumann', 'dir_deriv': 'y', 'value': k_sym},
+            'omega': {'type': 'Neumann', 'dir_deriv': 'y', 'value': omega_sym}
+        }),
+        (x_out, y_out, t_out, Re_out, theta_out, {
+            'p': {'type': 'Dirichlet', 'value': p_out}
+        }),
+        (x_wall, y_wall, t_wall, Re_wall, theta_wall, {
+            'u': {'type': 'Dirichlet', 'value': u_wall},
+            'v': {'type': 'Dirichlet', 'value': v_wall},
+            'k': {'type': 'Dirichlet', 'value': k_wall},
+        })
+    ]
+
     # Initial conditions (similar to boundary conditions)
     x_0 = torch.linspace(-200, 600, 200).to(device)
     y_0 = torch.linspace(-200, 200, 100).to(device)
@@ -356,48 +422,6 @@ def generate_boundary_initial_conditions(device):
     k_0 = torch.zeros_like(x_0).to(device)
     omega_0 = torch.zeros_like(x_0).to(device)
     c_0 = torch.zeros_like(x_0).to(device)
-
-    boundary_conditions = [
-        (x_in, y_in, t_in, Re_in, theta_in, {
-            'u': {'type': 'Dirichlet', 'value': u_in},
-            'v': {'type': 'Dirichlet', 'value': v_in},
-            'k': {'type': 'Dirichlet', 'value': k_in},
-            'omega': {'type': 'Dirichlet', 'value': omega_in},
-            'c': {'type': 'Dirichlet', 'value': c_in}
-        }),
-        (x_sym, y_sym_top, t_sym, Re_sym, theta_sym, {
-            'u': {'type': 'Neumann', 'dir_deriv': 'y', 'value': torch.zeros_like(x_sym)},
-            'v': {'type': 'Dirichlet', 'value': torch.zeros_like(x_sym)},
-            'p': {'type': 'Neumann', 'dir_deriv': 'y', 'value': torch.zeros_like(x_sym)},
-            'k': {'type': 'Neumann', 'dir_deriv': 'y', 'value': torch.zeros_like(x_sym)},
-            'omega': {'type': 'Neumann', 'dir_deriv': 'y', 'value': torch.zeros_like(x_sym)},
-            'c': {'type': 'Neumann', 'dir_deriv': 'y', 'value': torch.zeros_like(x_sym)}
-        }),
-        (x_sym, y_sym_bottom, t_sym, Re_sym, theta_sym, {
-            'u': {'type': 'Neumann', 'dir_deriv': 'y', 'value': torch.zeros_like(x_sym)},
-            'v': {'type': 'Dirichlet', 'value': torch.zeros_like(x_sym)},
-            'p': {'type': 'Neumann', 'dir_deriv': 'y', 'value': torch.zeros_like(x_sym)},
-            'k': {'type': 'Neumann', 'dir_deriv': 'y', 'value': torch.zeros_like(x_sym)},
-            'omega': {'type': 'Neumann', 'dir_deriv': 'y', 'value': torch.zeros_like(x_sym)},
-            'c': {'type': 'Neumann', 'dir_deriv': 'y', 'value': torch.zeros_like(x_sym)}
-        }),
-        (x_out, y_out, t_out, Re_out, theta_out, {
-            'u': {'type': 'Neumann', 'dir_deriv': 'x', 'value': torch.zeros_like(x_out)},
-            'v': {'type': 'Neumann', 'dir_deriv': 'x', 'value': torch.zeros_like(x_out)},
-            'p': {'type': 'Dirichlet', 'value': p_out},
-            'k': {'type': 'Neumann', 'dir_deriv': 'x', 'value': torch.zeros_like(x_out)},
-            'omega': {'type': 'Neumann', 'dir_deriv': 'x', 'value': torch.zeros_like(x_out)},
-            'c': {'type': 'Neumann', 'dir_deriv': 'x', 'value': torch.zeros_like(x_out)}
-        }),
-        (x_wall, y_wall, t_wall, Re_wall, theta_wall, {
-            'u': {'type': 'Dirichlet', 'value': u_wall},
-            'v': {'type': 'Dirichlet', 'value': v_wall},
-            'k': {'type': 'Dirichlet', 'value': k_wall},
-            'omega': {'type': 'Dirichlet', 'value': omega_wall},
-            'c': {'type': 'Dirichlet', 'value': c_wall}
-        })
-    ]
-
     initial_conditions = (x_0, y_0, t_0, Re_0, theta_0, u_0, v_0, p_0, k_0, omega_0, c_0)
 
     return boundary_conditions, initial_conditions
@@ -435,6 +459,12 @@ def main():
 
     model = PINN().to(device)
     optimizer = optim.Adam(model.parameters(), lr=1e-3)
+
+    u_ref, v_ref, p_ref, k_ref, omega_ref, coords,\
+      inflow_coords, outflow_coords, symmetry_coords, cylinder_coords, nu\
+      = get_dataset()
+    print('u_ref.shape')
+    print(u_ref.shape)
 
     # Generate collocation points (x, y, t, Re, theta)
     x = torch.linspace(-200, 600, 1000).to(device)
