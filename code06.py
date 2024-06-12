@@ -6,8 +6,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.tri as tri
 import torch.nn.functional as F
-from utils import calculate_range_and_divergence
-
+from utils import calculate_range_and_divergence, check_for_nan_and_inf\
+        , check_tensor_stats
 # Define global constants for SST k-omega model
 a1 = 0.31
 kappa = 0.41
@@ -295,15 +295,63 @@ def loss(model, x, y, t, Re, theta, boundary_conditions, initial_conditions, spa
     loss_ic = torch.mean((u_0_pred - u_0) ** 2) + torch.mean((v_0_pred - v_0) ** 2) + torch.mean((p_0_pred - p_0) ** 2) + torch.mean((k_0_pred - k_0) ** 2) + torch.mean((omega_0_pred - omega_0) ** 2) + torch.mean((c_0_pred - c_0) ** 2)
     total_loss += loss_ic
 
-
-
     # Sparse data
-    x_sparse, y_sparse, t_sparse, Re_sparse, theta_sparse, u_sparse, v_sparse, p_sparse, k_sparse, omega_sparse, c_sparse = sparse_data
-    u_sparse_pred, v_sparse_pred, p_sparse_pred, k_sparse_pred, omega_sparse_pred, c_sparse_pred = model(torch.cat([x_sparse, y_sparse, t_sparse, Re_sparse, theta_sparse], dim=1))
-    loss_sparse = torch.mean((u_sparse_pred - u_sparse) ** 2) + torch.mean((v_sparse_pred - v_sparse) ** 2) + torch.mean((p_sparse_pred - p_sparse) ** 2) + torch.mean((k_sparse_pred - k_sparse) ** 2) + torch.mean((omega_sparse_pred - omega_sparse) ** 2) + torch.mean((c_sparse_pred - c_sparse) ** 2)
+    x_sparse, y_sparse, t_sparse, Re_sparse, theta_sparse, u_sparse\
+        , v_sparse, p_sparse, k_sparse, omega_sparse, c_sparse = sparse_data
+
+    u_sparse_pred, v_sparse_pred, p_sparse_pred, k_sparse_pred\
+        , omega_sparse_pred, c_sparse_pred = \
+    model(torch.cat([x_sparse, y_sparse, t_sparse, Re_sparse, theta_sparse], dim=1))
+
+    check_for_nan_and_inf(x_sparse, "x_sparse")
+    check_for_nan_and_inf(y_sparse, "y_sparse")
+    check_for_nan_and_inf(t_sparse, "t_sparse")
+    check_for_nan_and_inf(Re_sparse, "Re_sparse")
+    check_for_nan_and_inf(theta_sparse, "theta_sparse")
+    check_for_nan_and_inf(u_sparse, "u_sparse")
+    check_for_nan_and_inf(v_sparse, "v_sparse")
+    check_for_nan_and_inf(p_sparse, "p_sparse")
+    check_for_nan_and_inf(k_sparse, "k_sparse")
+    check_for_nan_and_inf(omega_sparse, "omega_sparse")
+    check_for_nan_and_inf(c_sparse, "c_sparse")
+
+    check_for_nan_and_inf(u_sparse_pred, "u_sparse_pred")
+    check_for_nan_and_inf(v_sparse_pred, "v_sparse_pred")
+    check_for_nan_and_inf(p_sparse_pred, "p_sparse_pred")
+    check_for_nan_and_inf(k_sparse_pred, "k_sparse_pred")
+    check_for_nan_and_inf(omega_sparse_pred, "omega_sparse_pred")
+    check_for_nan_and_inf(c_sparse_pred, "c_sparse_pred")
+
+    check_tensor_stats(x_sparse, "x_sparse")
+    check_tensor_stats(y_sparse, "y_sparse")
+    check_tensor_stats(t_sparse, "t_sparse")
+    check_tensor_stats(u_sparse, "u_sparse")
+    check_tensor_stats(v_sparse, "v_sparse")
+    check_tensor_stats(p_sparse, "p_sparse")
+    check_tensor_stats(k_sparse, "k_sparse")
+    check_tensor_stats(omega_sparse, "omega_sparse")
+    check_tensor_stats(c_sparse, "c_sparse")
+
+    check_tensor_stats(u_sparse_pred, "u_sparse_pred")
+    check_tensor_stats(v_sparse_pred, "v_sparse_pred")
+    check_tensor_stats(p_sparse_pred, "p_sparse_pred")
+    check_tensor_stats(k_sparse_pred, "k_sparse_pred")
+    check_tensor_stats(omega_sparse_pred, "omega_sparse_pred")
+    check_tensor_stats(c_sparse_pred, "c_sparse_pred")
+
+
+# Calculate loss_sparse
+    loss_sparse = (
+        torch.mean((u_sparse_pred - u_sparse) ** 2) +
+        torch.mean((v_sparse_pred - v_sparse) ** 2) +
+        torch.mean((p_sparse_pred - p_sparse) ** 2) +
+        torch.mean((k_sparse_pred - k_sparse) ** 2) +
+        torch.mean((omega_sparse_pred - omega_sparse) ** 2) +
+        torch.mean((c_sparse_pred - c_sparse) ** 2)
+    )
     total_loss += loss_sparse
 
-    print('....................  loss values  .......................')
+    print('--------------------- loss values ------------------------')
     print('total_loss, loss_sparse, loss_ic, loss_bc, total_loss_pde')
     print(total_loss.item(), loss_sparse.item(), loss_ic.item(),
           loss_bc.item(), total_loss_pde.item())
@@ -480,8 +528,8 @@ def generate_boundary_conditions(device):
 
 def generate_sparse_data(device):
     u_ref, v_ref, p_ref, k_ref, omega_ref, c_ref, coords, Re, U_star, L_star = get_nondim_dataset()
-    x_sparse = torch.tensor(coords[:, 0], dtype=torch.float32).repeat(u_ref.shape[0]).unsqueeze(1).to(device)
-    y_sparse = torch.tensor(coords[:, 1], dtype=torch.float32).repeat(u_ref.shape[0]).unsqueeze(1).to(device)
+    x_sparse = torch.tensor(np.tile(coords[:,0], len(u_ref)), dtype=torch.float32).unsqueeze(1).to(device)
+    y_sparse = torch.tensor(np.tile(coords[:,1], len(u_ref)), dtype=torch.float32).unsqueeze(1).to(device)
     t_sparse = torch.arange(1.0, u_ref.shape[0] + 1.0).\
         repeat_interleave(u_ref.shape[1]).unsqueeze(1).to(device)* (U_star/L_star)
     Re_sparse = torch.full_like(x_sparse, Re.item()).to(device)
@@ -493,14 +541,10 @@ def generate_sparse_data(device):
     omega_sparse = torch.tensor(omega_ref, dtype=torch.float32).reshape(-1, 1).to(device)
     c_sparse = torch.tensor(c_ref, dtype=torch.float32).reshape(-1, 1).to(device)
 
-    print('---------------------u_sparse--shape--------------------------')
-    print(u_sparse.shape)
-    print(v_sparse.shape)
-    print(k_sparse.shape)
-    print(p_sparse.shape)
-    print(omega_sparse.shape)
-    print(c_sparse.shape)
-    return x_sparse, y_sparse, t_sparse, Re_sparse, theta_sparse, u_sparse, v_sparse, p_sparse, k_sparse, omega_sparse, c_sparse
+    print(f'---------------u_sparse.shape: {u_sparse.shape} ----------------------')
+    check_tensor_stats(x_sparse, "MMM x_sparse MMM")
+    return x_sparse, y_sparse, t_sparse, Re_sparse, theta_sparse, u_sparse\
+        , v_sparse, p_sparse, k_sparse, omega_sparse, c_sparse
 
 # Define the main function to train the PINN
 def main():
@@ -549,18 +593,21 @@ def main():
 
     # Generate sparse data
     sparse_data = generate_sparse_data(device)
-
-
+    x_sparse, y_sparse, t_sparse, Re_sparse, theta_sparse, u_sparse\
+        , v_sparse, p_sparse, k_sparse, omega_sparse, c_sparse = sparse_data
     for epoch in range(1000):
         # Randomly select a subset of collocation points and sparse data for this training step
-        subset_indices = torch.randperm(len(x))[:1000]
-        x_subset = x[subset_indices]
-        y_subset = y[subset_indices]
-        t_subset = t[subset_indices]
-        Re_subset = Re[subset_indices]
-        theta_subset = theta[subset_indices]
-        sparse_data_subset = [d.squeeze()[subset_indices].unsqueeze(1) for d in sparse_data]
-        loss_value = train_step(model, optimizer, x_subset, y_subset, t_subset, Re_subset, theta_subset, boundary_conditions, initial_conditions, sparse_data_subset)
+        pde_subset_indices = torch.randperm(len(x))[:1000]
+        sparse_subset_indices = torch.randperm(len(x_sparse))[:1000]
+        x_pde = x[pde_subset_indices]
+        y_pde = y[pde_subset_indices]
+        t_pde = t[pde_subset_indices]
+        Re_pde = Re[pde_subset_indices]
+        theta_pde = theta[pde_subset_indices]
+        sparse_data_subset = [d.squeeze()[sparse_subset_indices].unsqueeze(1) for d in sparse_data]
+        loss_value = train_step(model, optimizer, x_pde, y_pde, t_pde\
+            , Re_pde, theta_pde, boundary_conditions, initial_conditions\
+                                , sparse_data_subset)
         if epoch % 10 == 0:
             print(f'Epoch {epoch}, Loss: {loss_value}')
             save_model(model, 'pinn_model.pth')  # Save model at intervals
@@ -568,8 +615,8 @@ def main():
     # Plot the u field at time zero
     with torch.no_grad():
         # Generate a grid of points for prediction
-        x_pred = torch.linspace(-200/80, 600/80, 200).to(device)
-        y_pred = torch.linspace(-200/80, 200/80, 200).to(device)
+        x_pred = torch.linspace(-200/L_star, 600/L_star, 200).to(device)
+        y_pred = torch.linspace(-200/L_star, 200/L_star, 200).to(device)
         t_pred = torch.zeros(40000).to(device)  # Predicting at time t = 0
         Re_pred = torch.full_like(t_pred, Re_medium).to(device)
         theta_pred = torch.zeros_like(t_pred).to(device)
