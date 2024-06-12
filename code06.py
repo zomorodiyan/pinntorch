@@ -54,7 +54,6 @@ def get_dataset():
     #t = np.array(data["t"])
     coords = np.array(data["coords"])
     Re = np.array(data["Re"])
-    print('coords_shape: ', coords.shape)
 
     return (
         u_ref,
@@ -71,15 +70,16 @@ def get_dataset():
 class PINN(nn.Module):
     def __init__(self):
         super(PINN, self).__init__()
-        self.fc1 = nn.Linear(5, 20)  # 5 inputs: x, y, t, Re, theta
-        self.fc2 = nn.Linear(20, 20)
-        self.fc3 = nn.Linear(20, 20)
-        self.u_out = nn.Linear(20, 1)
-        self.v_out = nn.Linear(20, 1)
-        self.p_out = nn.Linear(20, 1)
-        self.k_out = nn.Linear(20, 1)
-        self.omega_out = nn.Linear(20, 1)
-        self.c_out = nn.Linear(20, 1)  # Output for concentration
+        N1 = 64
+        self.fc1 = nn.Linear(5, N1)  # 5 inputs: x, y, t, Re, theta
+        self.fc2 = nn.Linear(N1, N1)
+        self.fc3 = nn.Linear(N1, N1)
+        self.u_out = nn.Linear(N1, 1)
+        self.v_out = nn.Linear(N1, 1)
+        self.p_out = nn.Linear(N1, 1)
+        self.k_out = nn.Linear(N1, 1)
+        self.omega_out = nn.Linear(N1, 1)
+        self.c_out = nn.Linear(N1, 1)  # Output for concentration
 
         self._initialize_weights()
 
@@ -132,6 +132,7 @@ def pde_residuals(model, x, y, t, Re, theta):
     t.requires_grad_(True)
     Re.requires_grad_(True)
     u, v, p, k, omega, c = model(torch.cat([x, y, t, Re, theta], dim=1))
+
 
 
     # Compute first-order derivatives
@@ -219,7 +220,17 @@ def pde_residuals(model, x, y, t, Re, theta):
 # Define the loss function
 def loss(model, x, y, t, Re, theta, boundary_conditions, initial_conditions, sparse_data):
     # PDE residuals
+
+
     continuity_residual, x_momentum_residual, y_momentum_residual, k_residual, omega_residual, c_residual = pde_residuals(model, x, y, t, Re, theta)
+
+# Check residuals before computing the losses
+    check_for_nan_and_inf(continuity_residual, "continuity_residual")
+    check_for_nan_and_inf(x_momentum_residual, "x_momentum_residual")
+    check_for_nan_and_inf(y_momentum_residual, "y_momentum_residual")
+    check_for_nan_and_inf(k_residual, "k_residual")
+    check_for_nan_and_inf(omega_residual, "omega_residual")
+    check_for_nan_and_inf(c_residual, "c_residual")
 
     loss_continuity = torch.mean(continuity_residual ** 2)
     loss_x_momentum = torch.mean(x_momentum_residual ** 2)
@@ -228,8 +239,19 @@ def loss(model, x, y, t, Re, theta, boundary_conditions, initial_conditions, spa
     loss_omega = torch.mean(omega_residual ** 2)
     loss_c = torch.mean(c_residual ** 2)
 
+#    print('-------------------- pde losses -----------------------')
+#    print(f'cont: {loss_continuity.item()}')
+#    print(f'x-mom: {loss_x_momentum.item()}')
+#    print(f'y-mom: {loss_y_momentum.item()}')
+#    print(f'k: {loss_k.item()}')
+#    print(f'omega: {loss_omega.item()}')
+#    print(f'c: {loss_c.item()}')
+
+
+    loss_pde = loss_continuity + loss_x_momentum + loss_y_momentum + loss_k + loss_omega + loss_c
     total_loss = loss_continuity + loss_x_momentum + loss_y_momentum + loss_k + loss_omega + loss_c
-    total_loss_pde = loss_continuity + loss_x_momentum + loss_y_momentum + loss_k + loss_omega + loss_c
+    print('pde',loss_continuity.item(),loss_x_momentum.item()\
+          ,loss_y_momentum.item(),loss_k.item(),loss_omega.item(),loss_c.item())
 
     total_loss_bc = 0
     # Boundary conditions
@@ -303,43 +325,6 @@ def loss(model, x, y, t, Re, theta, boundary_conditions, initial_conditions, spa
         , omega_sparse_pred, c_sparse_pred = \
     model(torch.cat([x_sparse, y_sparse, t_sparse, Re_sparse, theta_sparse], dim=1))
 
-    check_for_nan_and_inf(x_sparse, "x_sparse")
-    check_for_nan_and_inf(y_sparse, "y_sparse")
-    check_for_nan_and_inf(t_sparse, "t_sparse")
-    check_for_nan_and_inf(Re_sparse, "Re_sparse")
-    check_for_nan_and_inf(theta_sparse, "theta_sparse")
-    check_for_nan_and_inf(u_sparse, "u_sparse")
-    check_for_nan_and_inf(v_sparse, "v_sparse")
-    check_for_nan_and_inf(p_sparse, "p_sparse")
-    check_for_nan_and_inf(k_sparse, "k_sparse")
-    check_for_nan_and_inf(omega_sparse, "omega_sparse")
-    check_for_nan_and_inf(c_sparse, "c_sparse")
-
-    check_for_nan_and_inf(u_sparse_pred, "u_sparse_pred")
-    check_for_nan_and_inf(v_sparse_pred, "v_sparse_pred")
-    check_for_nan_and_inf(p_sparse_pred, "p_sparse_pred")
-    check_for_nan_and_inf(k_sparse_pred, "k_sparse_pred")
-    check_for_nan_and_inf(omega_sparse_pred, "omega_sparse_pred")
-    check_for_nan_and_inf(c_sparse_pred, "c_sparse_pred")
-
-    check_tensor_stats(x_sparse, "x_sparse")
-    check_tensor_stats(y_sparse, "y_sparse")
-    check_tensor_stats(t_sparse, "t_sparse")
-    check_tensor_stats(u_sparse, "u_sparse")
-    check_tensor_stats(v_sparse, "v_sparse")
-    check_tensor_stats(p_sparse, "p_sparse")
-    check_tensor_stats(k_sparse, "k_sparse")
-    check_tensor_stats(omega_sparse, "omega_sparse")
-    check_tensor_stats(c_sparse, "c_sparse")
-
-    check_tensor_stats(u_sparse_pred, "u_sparse_pred")
-    check_tensor_stats(v_sparse_pred, "v_sparse_pred")
-    check_tensor_stats(p_sparse_pred, "p_sparse_pred")
-    check_tensor_stats(k_sparse_pred, "k_sparse_pred")
-    check_tensor_stats(omega_sparse_pred, "omega_sparse_pred")
-    check_tensor_stats(c_sparse_pred, "c_sparse_pred")
-
-
 # Calculate loss_sparse
     loss_sparse = (
         torch.mean((u_sparse_pred - u_sparse) ** 2) +
@@ -350,12 +335,7 @@ def loss(model, x, y, t, Re, theta, boundary_conditions, initial_conditions, spa
         torch.mean((c_sparse_pred - c_sparse) ** 2)
     )
     total_loss += loss_sparse
-
-    print('--------------------- loss values ------------------------')
-    print('total_loss, loss_sparse, loss_ic, loss_bc, total_loss_pde')
-    print(total_loss.item(), loss_sparse.item(), loss_ic.item(),
-          loss_bc.item(), total_loss_pde.item())
-
+    print(total_loss.item(), total_loss_bc.item(), loss_ic.item(), loss_sparse.item(), loss_pde.item())
     return total_loss
 
 # Define the training step
@@ -541,8 +521,6 @@ def generate_sparse_data(device):
     omega_sparse = torch.tensor(omega_ref, dtype=torch.float32).reshape(-1, 1).to(device)
     c_sparse = torch.tensor(c_ref, dtype=torch.float32).reshape(-1, 1).to(device)
 
-    print(f'---------------u_sparse.shape: {u_sparse.shape} ----------------------')
-    check_tensor_stats(x_sparse, "MMM x_sparse MMM")
     return x_sparse, y_sparse, t_sparse, Re_sparse, theta_sparse, u_sparse\
         , v_sparse, p_sparse, k_sparse, omega_sparse, c_sparse
 
@@ -551,10 +529,6 @@ def main():
     print('------------------------main------------------------------')
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f'Using device: {device}')
-    '''
-    u_ref, v_ref, p_ref, k_ref, omega_ref, coords,\ inflow_coords, outflow_coords, symmetry_coords, cylinder_coords, nu\
-      = get_dataset()
-    '''
 
     model = PINN().to(device)
     optimizer = optim.Adam(model.parameters(), lr=1e-3)
@@ -573,7 +547,7 @@ def main():
     theta_flat = torch.zeros_like(x_flat).to(device)
 
     # Filter out points inside the circle
-    mask = ~inside_circle(x_flat, y_flat)
+    mask = ~inside_circle(x_flat*L_star, y_flat*L_star)
     x = x_flat[mask].to(device)
     y = y_flat[mask].to(device)
     t = t_flat[mask].to(device)
@@ -595,20 +569,21 @@ def main():
     sparse_data = generate_sparse_data(device)
     x_sparse, y_sparse, t_sparse, Re_sparse, theta_sparse, u_sparse\
         , v_sparse, p_sparse, k_sparse, omega_sparse, c_sparse = sparse_data
-    for epoch in range(1000):
+    for epoch in range(200):
         # Randomly select a subset of collocation points and sparse data for this training step
-        pde_subset_indices = torch.randperm(len(x))[:1000]
-        sparse_subset_indices = torch.randperm(len(x_sparse))[:1000]
+        pde_subset_indices = torch.randperm(len(x))[:10000]
+        sparse_subset_indices = torch.randperm(len(x_sparse))[:10000]
         x_pde = x[pde_subset_indices]
         y_pde = y[pde_subset_indices]
         t_pde = t[pde_subset_indices]
         Re_pde = Re[pde_subset_indices]
         theta_pde = theta[pde_subset_indices]
         sparse_data_subset = [d.squeeze()[sparse_subset_indices].unsqueeze(1) for d in sparse_data]
+
         loss_value = train_step(model, optimizer, x_pde, y_pde, t_pde\
             , Re_pde, theta_pde, boundary_conditions, initial_conditions\
                                 , sparse_data_subset)
-        if epoch % 10 == 0:
+        if epoch % 100 == 0:
             print(f'Epoch {epoch}, Loss: {loss_value}')
             save_model(model, 'pinn_model.pth')  # Save model at intervals
 
@@ -618,14 +593,14 @@ def main():
         x_pred = torch.linspace(-200/L_star, 600/L_star, 200).to(device)
         y_pred = torch.linspace(-200/L_star, 200/L_star, 200).to(device)
         t_pred = torch.zeros(40000).to(device)  # Predicting at time t = 0
-        Re_pred = torch.full_like(t_pred, Re_medium).to(device)
+        Re_pred = torch.full_like(t_pred, rho*U_star*L_star/mu).to(device)
         theta_pred = torch.zeros_like(t_pred).to(device)
 
         xx, yy = torch.meshgrid(x_pred, y_pred, indexing='ij')
         xx_flat = xx.flatten()
         yy_flat = yy.flatten()
         tt = torch.zeros_like(xx_flat)  # Predicting at time t = 0
-        Re_flat = torch.full_like(tt, Re_medium).to(device)
+        Re_flat = torch.full_like(tt, rho*U_star*L_star/mu).to(device)
         theta_flat = torch.zeros_like(tt).to(device)
 
         # Filter out points inside the circle
@@ -692,6 +667,12 @@ def main():
         plt.tricontourf(triang, omega_pred.squeeze(), cmap='jet', levels=100)
         plt.colorbar()
         plt.title('Predicted $p$')
+        plt.tight_layout()
+
+        plt.subplot(3, 2, 6)
+        plt.tricontourf(triang, u_pred.squeeze(), cmap='jet', levels=100)
+        plt.colorbar()
+        plt.title('Predicted $u$')
         plt.tight_layout()
 
         # Save directory
