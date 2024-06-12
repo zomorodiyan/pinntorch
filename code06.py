@@ -6,8 +6,12 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.tri as tri
 import torch.nn.functional as F
-from utils import calculate_range_and_divergence, check_for_nan_and_inf\
-        , check_tensor_stats
+from utils import calculate_range_and_divergence
+from utils import check_for_nan_and_inf
+from utils import check_tensor_stats
+from monitor import ActivationMonitor
+from monitor
+
 # Define global constants for SST k-omega model
 a1 = 0.31
 kappa = 0.41
@@ -74,6 +78,8 @@ class PINN(nn.Module):
         self.fc1 = nn.Linear(5, N1)  # 5 inputs: x, y, t, Re, theta
         self.fc2 = nn.Linear(N1, N1)
         self.fc3 = nn.Linear(N1, N1)
+        self.fc4 = nn.Linear(N1, N1)
+        self.fc5 = nn.Linear(N1, N1)
         self.u_out = nn.Linear(N1, 1)
         self.v_out = nn.Linear(N1, 1)
         self.p_out = nn.Linear(N1, 1)
@@ -87,6 +93,8 @@ class PINN(nn.Module):
         x = torch.tanh(self.fc1(x))
         x = torch.tanh(self.fc2(x))
         x = torch.tanh(self.fc3(x))
+        x = torch.tanh(self.fc4(x))
+        x = torch.tanh(self.fc5(x))
         u = self.u_out(x)
         v = self.v_out(x)
         p = self.p_out(x)
@@ -95,12 +103,21 @@ class PINN(nn.Module):
         c = self.c_out(x)
         return u, v, p, k, omega, c
 
+    '''
     def _initialize_weights(self):
         for m in self.modules():
             if isinstance(m, nn.Linear):
                 nn.init.xavier_uniform_(m.weight)
                 if m.bias is not None:
                     nn.init.zeros_(m.bias)
+    '''
+    def _initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.kaiming_uniform_(m.weight, nonlinearity='relu')  # Kaiming initialization for weights
+                if m.bias is not None:
+                    nn.init.uniform_(m.bias, -0.1, 0.1)  # Uniform initialization for biases
+
 
 def smooth_maximum(a, b, alpha=10):
     b = b.expand_as(a)  # Ensure b has the same shape as a
@@ -343,6 +360,7 @@ def train_step(model, optimizer, x, y, t, Re, theta, boundary_conditions, initia
     optimizer.zero_grad()
     total_loss = loss(model, x, y, t, Re, theta, boundary_conditions, initial_conditions, sparse_data)
     total_loss.backward()
+    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)  # Clip gradients here
     optimizer.step()
     return total_loss.item()
 
@@ -532,6 +550,8 @@ def main():
 
     model = PINN().to(device)
     optimizer = optim.Adam(model.parameters(), lr=1e-3)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1000, gamma=0.5)
+
 
     U_star = 9.0
     L_star = 80.0
@@ -569,15 +589,15 @@ def main():
     sparse_data = generate_sparse_data(device)
     x_sparse, y_sparse, t_sparse, Re_sparse, theta_sparse, u_sparse\
         , v_sparse, p_sparse, k_sparse, omega_sparse, c_sparse = sparse_data
-    for epoch in range(200):
+    for epoch in range(100):
         # Randomly select a subset of collocation points and sparse data for this training step
-        pde_subset_indices = torch.randperm(len(x))[:10000]
-        sparse_subset_indices = torch.randperm(len(x_sparse))[:10000]
+        pde_subset_indices = torch.randperm(len(x))[:2048]
         x_pde = x[pde_subset_indices]
         y_pde = y[pde_subset_indices]
         t_pde = t[pde_subset_indices]
         Re_pde = Re[pde_subset_indices]
         theta_pde = theta[pde_subset_indices]
+        sparse_subset_indices = torch.randperm(len(x_sparse))[:2048]
         sparse_data_subset = [d.squeeze()[sparse_subset_indices].unsqueeze(1) for d in sparse_data]
 
         loss_value = train_step(model, optimizer, x_pde, y_pde, t_pde\
@@ -586,6 +606,8 @@ def main():
         if epoch % 100 == 0:
             print(f'Epoch {epoch}, Loss: {loss_value}')
             save_model(model, 'pinn_model.pth')  # Save model at intervals
+
+        scheduler.step()  # Update the learning rate
 
     # Plot the u field at time zero
     with torch.no_grad():
@@ -611,8 +633,21 @@ def main():
         Re_masked = Re_flat[mask]
         theta_masked = theta_flat[mask]
 
+        check_tensor_stats(xx_masked,'xx_masked')
+        check_tensor_stats(yy_masked,'yy_masked')
+        check_tensor_stats(tt_masked,'tt_masked')
+        check_tensor_stats(Re_masked,'Re_masked')
+        check_tensor_stats(theta_masked,'theta_masked')
+
         # Predict values using the neural network
         u_pred, v_pred, p_pred, k_pred, omega_pred, c_pred = model(torch.cat([xx_masked.unsqueeze(1), yy_masked.unsqueeze(1), tt_masked.unsqueeze(1), Re_masked.unsqueeze(1), theta_masked.unsqueeze(1)], dim=1))
+
+        check_tensor_stats(u_pred,'u_pred')
+        check_tensor_stats(v_pred,'v_pred')
+        check_tensor_stats(p_pred,'p_pred')
+        check_tensor_stats(k_pred,'k_pred')
+        check_tensor_stats(omega_pred,'omega_pred')
+        check_tensor_stats(c_pred,'c_pred')
 
         # Convert predictions to numpy arrays for plotting
         u_pred = u_pred.cpu().numpy()
@@ -660,19 +695,19 @@ def main():
         plt.subplot(3, 2, 4)
         plt.tricontourf(triang, k_pred.squeeze(), cmap='jet', levels=100)
         plt.colorbar()
-        plt.title('Predicted $p$')
+        plt.title('Predicted $k$')
         plt.tight_layout()
 
         plt.subplot(3, 2, 5)
         plt.tricontourf(triang, omega_pred.squeeze(), cmap='jet', levels=100)
         plt.colorbar()
-        plt.title('Predicted $p$')
+        plt.title('Predicted $omega$')
         plt.tight_layout()
 
         plt.subplot(3, 2, 6)
-        plt.tricontourf(triang, u_pred.squeeze(), cmap='jet', levels=100)
+        plt.tricontourf(triang, c_pred.squeeze(), cmap='jet', levels=100)
         plt.colorbar()
-        plt.title('Predicted $u$')
+        plt.title('Predicted $c$')
         plt.tight_layout()
 
         # Save directory
