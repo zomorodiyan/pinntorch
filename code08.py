@@ -12,6 +12,23 @@ from utils import check_tensor_stats
 from monitor import ActivationMonitor
 from monitor import register_hooks
 
+def set_seed(seed):
+    import torch
+    import numpy as np
+    import random
+
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+# Set the seed
+set_seed(42)
+
 # Define global constants for SST k-omega model
 a1 = 0.31
 kappa = 0.41
