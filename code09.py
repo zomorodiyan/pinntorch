@@ -9,8 +9,29 @@ import torch.nn.functional as F
 from utils import calculate_range_and_divergence
 from utils import check_for_nan_and_inf
 from utils import check_tensor_stats
-from monitor import ActivationMonitor
+#from monitor import ActivationMonitor
+from monitor import forward_hook
 from monitor import register_hooks
+
+print('run 10003')
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+def set_seed(seed):
+    import torch
+    import numpy as np
+    import random
+
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+# Set the seed
+set_seed(10004)
 
 # Define global constants for SST k-omega model
 a1 = 0.31
@@ -85,10 +106,10 @@ class PINN(nn.Module):
 
     def forward(self, x):
         x = self.normalization(x)
-        x = torch.relu(self.fc1(x))
-        x = torch.relu(self.fc2(x))
-        x = torch.relu(self.fc3(x))
-        x = torch.relu(self.fc4(x))
+        x = torch.tanh(self.fc1(x))
+        x = torch.tanh(self.fc2(x))
+        x = torch.tanh(self.fc3(x))
+        x = torch.tanh(self.fc4(x))
         outputs = self.fc_out(x)
         outputs = self.denormalization(outputs)
         u, v, p, k, omega, c = outputs[:, 0], outputs[:, 1], outputs[:, 2], outputs[:, 3], outputs[:, 4], outputs[:, 5]
@@ -109,6 +130,8 @@ class PINN(nn.Module):
                 if m.bias is not None:
                     nn.init.uniform_(m.bias, -0.1, 0.1)
 
+    '''
+    '''
     def _initialize_weights(self):
         for m in self.modules():
             if isinstance(m, nn.Linear):
@@ -149,13 +172,12 @@ def smooth_conditional(cond, true_val, false_val, alpha=10):
     false_val = false_val.expand_as(cond)  # Ensure false_val has the same shape as cond
     return cond.sigmoid() * true_val + (1 - cond.sigmoid()) * false_val
 
-def safe_sqrt(tensor, epsilon=1e-7):
+def safe_sqrt(tensor, epsilon=1e-8):
     return torch.sqrt(tensor + epsilon)
 
-def ensure_positive(tensor, epsilon=1e-7):
+def ensure_positive(tensor, epsilon=1e-10):
     print("ensure_positive")
     return torch.nn.functional.relu(tensor) + epsilon
-
 
 # Define the PDE residuals for the SST k-omega model and convection-diffusion equation
 def pde_residuals(model, x, y, t, Re, theta):
@@ -239,19 +261,6 @@ def pde_residuals(model, x, y, t, Re, theta):
 
     continuity_residual = u_x + v_y
 
-    # Debugging output
-    print("Shapes of intermediate variables:")
-    print("u shape:", u.shape)
-    print("v shape:", v.shape)
-    print("k shape:", k.shape)
-    print("omega shape:", omega.shape)
-    print("u_x shape:", u_x.shape)
-    print("v_y shape:", v_y.shape)
-    print("k_x shape:", k_x.shape)
-    print("omega_x shape:", omega_x.shape)
-    print("Re shape:", Re.shape)
-    print("mu_t shape:", mu_t.shape)
-
     x_mom_gradx = torch.autograd.grad((1/Re + mu_t) * (4/3 * u_x - 2/3 * v_y), x, grad_outputs=torch.ones_like(u_x), create_graph=True)[0]
     x_mom_grady = torch.autograd.grad((1/Re + mu_t) * (v_x + u_y), y, grad_outputs=torch.ones_like(u_x), create_graph=True)[0]
     x_momentum_residual = u_t + u * u_x + v * u_y + p_x - x_mom_gradx - x_mom_grady
@@ -281,85 +290,115 @@ def pde_residuals(model, x, y, t, Re, theta):
     Y_omega = torch.clamp(Y_omega, min=-10.0, max=10.0)
     D_omega = torch.clamp(D_omega, min=-10.0, max=10.0)
 
+
     omega_residual = omega_t + u * omega_x + v * omega_y - omega_transport_term1 - omega_transport_term2 - G_omega + Y_omega - D_omega
     c_residual = c_t + u * c_x + v * c_y - (1 / Re) * (c_x + c_y)  # Convection-diffusion equation
+
+    check_list = {
+        'u': u,
+        'v': v,
+        'p': p,
+        'k': k,
+        'omega': omega,
+        'Re': Re,
+        'u_x': u_x,
+        'v_y': v_y,
+        'u_y': u_y,
+        'v_x': v_x,
+        'u_t': u_t,
+        'v_t': v_t,
+        '*continuity': continuity_residual,
+        'p_x': p_x,
+        'p_y': p_y,
+        'k_x': k_x,
+        'k_y': k_y,
+        'S': S,
+        'omega_x': omega_x,
+        'omega_y': omega_y,
+        'beta': beta,
+        'sigma_k': sigma_k,
+        'sigma_omega': sigma_omega,
+        'mu_t': mu_t,
+        'G_k': G_k,
+        'Y_k': Y_k,
+        'G_k_tilde': G_k_tilde,
+        'G_omega': G_omega,
+        'Y_omega': Y_omega,
+        'D_omega': D_omega,
+        'x_mom_gradx': x_mom_gradx,
+        'x_mom_grady': x_mom_grady,
+        '*x_momentum': x_momentum_residual,
+        'y_mom_grady': y_mom_grady,
+        'y_mom_gradx': y_mom_gradx,
+        '*y_momentum': y_momentum_residual,
+        'k_transport_term1': k_transport_term1,
+        'k_transport_term2': k_transport_term2,
+        '*k_transport': k_residual,
+        'omega_transport_term1': omega_transport_term1,
+        'omega_transport_term2': omega_transport_term2,
+        '*omega_transport': omega_residual,
+        'c': c,
+        'c_x': c_x,
+        'c_y': c_y,
+        '*c_transport': c_residual
+    }
+    for key in check_list:
+        check_for_nan_and_inf(check_list[key], key)
+
+#check_for_nan_and_inf(x_momentum_residual,'x_mom')
+#    check_for_nan_and_inf(y_momentum_residual,'y_mom')
+#   check_for_nan_and_inf(k_residual, 'k_trn')
+#  check_for_nan_and_inf(omega_residual, 'omega_trn')
+# check_for_nan_and_inf(c_residual, 'conv-diff')
 
     return continuity_residual, x_momentum_residual, y_momentum_residual, k_residual, omega_residual, c_residual
 
 # Define the loss function
-def loss(model, x, y, t, Re, theta, boundary_conditions, initial_conditions, sparse_data):
+def loss(model, x, y, t, Re, theta, boundary_conditions, initial_conditions, sparse_data, weights):
     # PDE residuals
     continuity_residual, x_momentum_residual, y_momentum_residual, k_residual, omega_residual, c_residual = pde_residuals(model, x, y, t, Re, theta)
 
-# Check residuals before computing the losses
-#    check_for_nan_and_inf(continuity_residual, "continuity_residual")
-#    check_for_nan_and_inf(x_momentum_residual, "x_momentum_residual")
-#    check_for_nan_and_inf(y_momentum_residual, "y_momentum_residual")
-#    check_for_nan_and_inf(k_residual, "k_residual")
-#    check_for_nan_and_inf(omega_residual, "omega_residual")
-#    check_for_nan_and_inf(c_residual, "c_residual")
+    # Losses for PDE
+    pde_losses = [
+        torch.mean(continuity_residual ** 2),
+        torch.mean(x_momentum_residual ** 2),
+        torch.mean(y_momentum_residual ** 2),
+        torch.mean(k_residual ** 2),
+        torch.mean(omega_residual ** 2),
+        torch.mean(c_residual ** 2)
+    ]
+    print(f'cont:{pde_losses[0].item()}, Xmom:{pde_losses[1].item()}, Ymom:{pde_losses[2].item()}, Ktra:{pde_losses[3].item()}, Wtra:{pde_losses[4].item()}, conc:{pde_losses[5].item()}')
 
-    loss_continuity = torch.mean(continuity_residual ** 2)
-    loss_x_momentum = torch.mean(x_momentum_residual ** 2)
-    loss_y_momentum = torch.mean(y_momentum_residual ** 2)
-    loss_k = torch.mean(k_residual ** 2)
-    loss_omega = torch.mean(omega_residual ** 2)
-    loss_c = torch.mean(c_residual ** 2)
+    loss_pde = sum([weights['pde'][i] * pde_losses[i] for i in range(len(pde_losses))])
 
-#    print('-------------------- pde losses -----------------------')
-#    print(f'cont: {loss_continuity.item()}')
-#    print(f'x-mom: {loss_x_momentum.item()}')
-#    print(f'y-mom: {loss_y_momentum.item()}')
-#    print(f'k: {loss_k.item()}')
-#    print(f'omega: {loss_omega.item()}')
-#    print(f'c: {loss_c.item()}')
-
-    loss_pde = loss_continuity + loss_x_momentum + loss_y_momentum + loss_k + loss_omega + loss_c
-    total_loss = loss_continuity + loss_x_momentum + loss_y_momentum + loss_k + loss_omega + loss_c
-    print('pde',loss_continuity.item(),loss_x_momentum.item()\
-          ,loss_y_momentum.item(),loss_k.item(),loss_omega.item(),loss_c.item())
-
-    total_loss_bc = 0
-    # Boundary conditions
+    # Boundary conditions loss
+    bc_losses = []
     for bc in boundary_conditions:
         x_b, y_b, t_b, Re_b, theta_b, conditions = bc
         x_b.requires_grad_(True)
         y_b.requires_grad_(True)
         u_pred, v_pred, p_pred, k_pred, omega_pred, c_pred = model(torch.cat([x_b, y_b, t_b, Re_b, theta_b], dim=1))
 
-        loss_one_bc = 0 # initialize total_loss_bc
         for variable, condition in conditions.items():
             if condition['type'] == 'Dirichlet':
                 value = condition['value']
                 if variable == 'u':
-                    loss_bc = torch.mean((u_pred - value) ** 2)
+                    bc_losses.append(torch.mean((u_pred - value) ** 2))
                 elif variable == 'v':
-                    loss_bc = torch.mean((v_pred - value) ** 2)
+                    bc_losses.append(torch.mean((v_pred - value) ** 2))
                 elif variable == 'p':
-                    loss_bc = torch.mean((p_pred - value) ** 2)
+                    bc_losses.append(torch.mean((p_pred - value) ** 2))
                 elif variable == 'k':
-                    loss_bc = torch.mean((k_pred - value) ** 2)
+                    bc_losses.append(torch.mean((k_pred - value) ** 2))
                 elif variable == 'omega':
-                    loss_bc = torch.mean((omega_pred - value) ** 2)
-                elif variable == 'c':
-                    loss_bc = torch.mean((c_pred - value) ** 2)
+                    bc_losses.append(torch.mean((omega_pred - value) ** 2))
+                else:
+                    print('not implemented')
+                    return(-1333)
             elif condition['type'] == 'Neumann':
                 dir_deriv = condition['dir_deriv']
                 value = condition['value']
-                if dir_deriv == 'x':
-                    if variable == 'u':
-                        deriv = torch.autograd.grad(u_pred, x_b, grad_outputs=torch.ones_like(u_pred), create_graph=True)[0]
-                    elif variable == 'v':
-                        deriv = torch.autograd.grad(v_pred, x_b, grad_outputs=torch.ones_like(v_pred), create_graph=True)[0]
-                    elif variable == 'p':
-                        deriv = torch.autograd.grad(p_pred, x_b, grad_outputs=torch.ones_like(p_pred), create_graph=True)[0]
-                    elif variable == 'k':
-                        deriv = torch.autograd.grad(k_pred, x_b, grad_outputs=torch.ones_like(k_pred), create_graph=True)[0]
-                    elif variable == 'omega':
-                        deriv = torch.autograd.grad(omega_pred, x_b, grad_outputs=torch.ones_like(omega_pred), create_graph=True)[0]
-                    elif variable == 'c':
-                        deriv = torch.autograd.grad(c_pred, x_b, grad_outputs=torch.ones_like(c_pred), create_graph=True)[0]
-                elif dir_deriv == 'y':
+                if dir_deriv == 'y':
                     if variable == 'u':
                         deriv = torch.autograd.grad(u_pred, y_b, grad_outputs=torch.ones_like(u_pred), create_graph=True)[0]
                     elif variable == 'v':
@@ -370,44 +409,84 @@ def loss(model, x, y, t, Re, theta, boundary_conditions, initial_conditions, spa
                         deriv = torch.autograd.grad(k_pred, y_b, grad_outputs=torch.ones_like(k_pred), create_graph=True)[0]
                     elif variable == 'omega':
                         deriv = torch.autograd.grad(omega_pred, y_b, grad_outputs=torch.ones_like(omega_pred), create_graph=True)[0]
-                    elif variable == 'c':
-                        deriv = torch.autograd.grad(c_pred, y_b, grad_outputs=torch.ones_like(c_pred), create_graph=True)[0]
-                loss_bc = torch.mean((deriv - value) ** 2)
-            loss_one_bc += loss_bc
-        total_loss_bc += loss_one_bc
-    total_loss += total_loss_bc
+                else:
+                    print('not implemented')
+                    return(-1444)
+                bc_losses.append(torch.mean((deriv - value) ** 2))
+    loss_bc = sum([weights['bc'][i] * bc_losses[i] for i in range(len(bc_losses))])
 
-    # Initial conditions
+    # Initial conditions loss
     x_0, y_0, t_0, Re_0, theta_0, u_0, v_0, p_0, k_0, omega_0, c_0 = initial_conditions
     u_0_pred, v_0_pred, p_0_pred, k_0_pred, omega_0_pred, c_0_pred = model(torch.cat([x_0, y_0, t_0, Re_0, theta_0], dim=1))
-    loss_ic = torch.mean((u_0_pred - u_0) ** 2) + torch.mean((v_0_pred - v_0) ** 2) + torch.mean((p_0_pred - p_0) ** 2) + torch.mean((k_0_pred - k_0) ** 2) + torch.mean((omega_0_pred - omega_0) ** 2) + torch.mean((c_0_pred - c_0) ** 2)
-    total_loss += loss_ic
+    ic_losses = [
+        torch.mean((u_0_pred - u_0) ** 2),
+        torch.mean((v_0_pred - v_0) ** 2),
+        torch.mean((p_0_pred - p_0) ** 2),
+        torch.mean((k_0_pred - k_0) ** 2),
+        torch.mean((omega_0_pred - omega_0) ** 2),
+        torch.mean((c_0_pred - c_0) ** 2)
+    ]
+    loss_ic = sum([weights['ic'][i] * ic_losses[i] for i in range(len(ic_losses))])
 
-    # Sparse data
-    x_sparse, y_sparse, t_sparse, Re_sparse, theta_sparse, u_sparse\
-        , v_sparse, p_sparse, k_sparse, omega_sparse, c_sparse = sparse_data
-
-    u_sparse_pred, v_sparse_pred, p_sparse_pred, k_sparse_pred\
-        , omega_sparse_pred, c_sparse_pred = \
-    model(torch.cat([x_sparse, y_sparse, t_sparse, Re_sparse, theta_sparse], dim=1))
-
-# Calculate loss_sparse
-    loss_sparse = (
-        torch.mean((u_sparse_pred - u_sparse) ** 2) +
-        torch.mean((v_sparse_pred - v_sparse) ** 2) +
-        torch.mean((p_sparse_pred - p_sparse) ** 2) +
-        torch.mean((k_sparse_pred - k_sparse) ** 2) +
-        torch.mean((omega_sparse_pred - omega_sparse) ** 2) +
+    # Sparse data loss
+    x_sparse, y_sparse, t_sparse, Re_sparse, theta_sparse, u_sparse, v_sparse, p_sparse, k_sparse, omega_sparse, c_sparse = sparse_data
+    u_sparse_pred, v_sparse_pred, p_sparse_pred, k_sparse_pred, omega_sparse_pred, c_sparse_pred = model(torch.cat([x_sparse, y_sparse, t_sparse, Re_sparse, theta_sparse], dim=1))
+    sparse_losses = [
+        torch.mean((u_sparse_pred - u_sparse) ** 2),
+        torch.mean((v_sparse_pred - v_sparse) ** 2),
+        torch.mean((p_sparse_pred - p_sparse) ** 2),
+        torch.mean((k_sparse_pred - k_sparse) ** 2),
+        torch.mean((omega_sparse_pred - omega_sparse) ** 2),
         torch.mean((c_sparse_pred - c_sparse) ** 2)
-    )
-    total_loss += loss_sparse
-    print(total_loss.item(), total_loss_bc.item(), loss_ic.item(), loss_sparse.item(), loss_pde.item())
-    return total_loss
+    ]
+    loss_sparse = sum([weights['sparse'][i] * sparse_losses[i] for i in range(len(sparse_losses))])
+
+    # Total loss
+    total_loss = loss_pde + loss_bc + loss_ic + loss_sparse
+
+    # Print loss components for debugging
+    print(total_loss.item(), loss_bc.item(), loss_ic.item(), loss_sparse.item(), loss_pde.item())
+    return total_loss, [pde_losses, bc_losses, ic_losses, sparse_losses]
+
+# Function to update weights
+def update_weights(model, x, y, t, Re, theta, boundary_conditions, initial_conditions, sparse_data):
+    model.zero_grad()
+
+    # Compute gradients for each loss component
+    _, loss_components = loss(model, x, y, t, Re, theta, boundary_conditions, initial_conditions, sparse_data, default_weights())
+
+    # Compute gradients for each loss component
+    gradients = {}
+    for key, losses in zip(['pde', 'bc', 'ic', 'sparse'], loss_components):
+        grads = []
+        for loss_ in losses:
+            loss_.backward(retain_graph=True)
+            grads.append(torch.norm(torch.cat([p.grad.view(-1) for p in model.parameters() if p.grad is not None])))
+            model.zero_grad()
+        gradients[key] = grads
+
+    # Compute global weights
+    total_norm = sum([sum(grads) for grads in gradients.values()])
+    weights = {key: torch.tensor([total_norm / grad for grad in grads], device=device) for key, grads in gradients.items()}
+
+    return weights
+
+# Function to return default weights
+def default_weights():
+    return {
+        'pde': torch.tensor([1.0] * 6, device=device),
+        'bc': torch.tensor([1.0] * 14, device=device),
+        'ic': torch.tensor([1.0] * 6, device=device),
+        'sparse': torch.tensor([1.0] * 6, device=device)
+    }
 
 # Define the training step
-def train_step(model, optimizer, x, y, t, Re, theta, boundary_conditions, initial_conditions, sparse_data):
+def train_step(model, optimizer, x, y, t, Re, theta, boundary_conditions\
+               , initial_conditions, sparse_data, weights):
+
     optimizer.zero_grad()
-    total_loss = loss(model, x, y, t, Re, theta, boundary_conditions, initial_conditions, sparse_data)
+    total_loss, _ = loss(model, x, y, t, Re, theta, boundary_conditions, initial_conditions, sparse_data, weights)
+
     total_loss.backward()
     torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)  # Clip gradients here
     optimizer.step()
@@ -441,7 +520,7 @@ def get_nondim_dataset():
     v_ref = np.clip(v_ref, 0.0, None)
     p_ref = np.clip(p_ref, 0.0, None)
     k_ref = np.clip(k_ref, 0.0, None)
-    omega_ref = np.clip(omega_ref, 0.0, 50)
+    omega_ref = np.clip(omega_ref, 0.0, 30)
     c_ref = np.clip(c_ref, 0.0, 0.01)
 
     return (
@@ -488,25 +567,25 @@ def generate_boundary_conditions(device):
     # Velocity Inlet (Left Boundary: x = -200, -200 ≤ y ≤ 200)
     Re_medium = 1.225 * 9.0 * 80.0 / 1.7894e-5  # for now
     k_in_value = 3/2*(0.05*9.0)**2/9.0**2 # for now
-    omega_in_value = (3/2*(0.05*9.0)**2/9.0**2)/(10*1.7894e-5/1.225) # for now
+    omega_in_value = (3/2*(0.05*9.0)**2/9.0**2)/(10*1.7894e-5/1.225) # sst k-w
+    omega_in_value = 30
+    L_star = 80.0
 
-    x_in = torch.full((400, 1), -200.0).to(device)
-    y_in = torch.linspace(-200, 200, 400).view(-1, 1).to(device)
-    t_in = torch.zeros_like(x_in).to(device)
+    x_in = torch.full((400, 1), -200.0/L_star).to(device)
+    y_in = torch.linspace(-200/L_star, 200/L_star, 400).view(-1, 1).to(device)
+    t_in = torch.randint(1, 101, x_in.shape, device=device).float()
     Re_in = torch.full((400, 1), Re_medium).to(device) # for now
     theta_in = torch.zeros_like(x_in).to(device)
     u_in = torch.full((400, 1), 1.0).to(device)
     v_in = torch.zeros_like(u_in).to(device)
     k_in = torch.full((400, 1), k_in_value).to(device) # for now
     omega_in = torch.full((400, 1), omega_in_value).to(device) # for now
-    c_in = torch.zeros_like(x_in).to(device)  # Concentration
 
     # Symmetry (Top and Bottom Boundaries: -200 ≤ x ≤ 600, y = ±200)
-    x_sym = torch.linspace(-200, 600, 400).view(-1, 1).to(device)
-    y_sym_top = torch.full((400, 1), 200.0).to(device)
-    y_sym_bottom = torch.full((400, 1), -200.0).to(device)
-    t_sym = torch.zeros_like(x_sym).to(device)
-    Re_sym = torch.full((400, 1), Re_medium).to(device)
+    x_sym = torch.linspace(-200/L_star, 600/L_star, 100).view(-1, 1).to(device)
+    y_sym = (torch.where(torch.randint(0, 2, (100, 1), device=device) == 0, -200.0, 200.0) / L_star).to(device)
+    t_sym = torch.randint(1, 101, x_sym.shape, device=device).float()
+    Re_sym = torch.full((100, 1), Re_medium).to(device)
     theta_sym = torch.zeros_like(x_sym).to(device)
     u_sym = torch.zeros_like(x_sym).to(device)
     v_sym = torch.zeros_like(x_sym).to(device) # for both neumann and dirichlet boundary conditions
@@ -515,30 +594,25 @@ def generate_boundary_conditions(device):
     omega_sym = torch.zeros_like(x_sym).to(device)
 
     # Constant Pressure Outlet (Right Boundary: x = 600, -200 ≤ y ≤ 200)
-    x_out = torch.full((400, 1), 600.0).to(device)
-    y_out = torch.linspace(-200, 200, 400).view(-1, 1).to(device)
-    t_out = torch.zeros_like(x_out).to(device)
-    Re_out = torch.full((400, 1), Re_medium).to(device)
+    x_out = torch.full((200, 1), 600.0/L_star).to(device)
+    y_out = torch.linspace(-200/L_star, 200/L_star, 200).view(-1, 1).to(device)
+    t_out = torch.randint(1, 101, x_out.shape, device=device).float()
+    Re_out = torch.full((200, 1), Re_medium).to(device)
     theta_out = torch.zeros_like(x_out).to(device)
-    u_out = torch.zeros_like(x_out).to(device)
-    v_out = torch.zeros_like(x_out).to(device)
-    p_out = torch.zeros((400, 1)).to(device)  # Dirichlet p = 0
-    k_out = torch.zeros_like(x_out).to(device)
-    omega_out = torch.zeros_like(x_out).to(device)
-    c_out = torch.zeros_like(x_out).to(device)
+    p_out = torch.zeros((200, 1)).to(device)  # Dirichlet p = 0
 
     # Circular Wall (Radius 40, Centered at (0,0))
-    theta_rand = torch.linspace(0, 2 * np.pi, 200).to(device)
-    x_wall = (40 * torch.cos(theta_rand)).view(-1, 1).to(device)
-    y_wall = (40 * torch.sin(theta_rand)).view(-1, 1).to(device)
-    t_wall = torch.zeros_like(x_wall).to(device)
-    Re_wall = torch.full((200, 1), Re_medium).to(device)
+    theta_rand = torch.linspace(0, 2 * np.pi, 400).to(device)
+    x_wall = (40/L_star * torch.cos(theta_rand)).view(-1, 1).to(device)
+    y_wall = (40/L_star * torch.sin(theta_rand)).view(-1, 1).to(device)
+    t_wall = torch.randint(1, 101, x_wall.shape, device=device).float()
+    Re_wall = torch.full((400, 1), Re_medium).to(device)
     theta_wall = torch.zeros_like(x_wall).to(device)
     u_wall = torch.zeros_like(x_wall).to(device)
     v_wall = torch.zeros_like(x_wall).to(device)
     k_wall = torch.zeros_like(x_wall).to(device)  # u, v, k are zero
-    omega_wall = torch.ones_like(x_wall).to(device)  # Specified value
-    c_wall = torch.zeros_like(x_wall).to(device)  # Concentration
+#omega_wall = torch.ones_like(x_wall).to(device)  # Skipped
+#c_wall = torch.zeros_like(x_wall).to(device)  # Concentration
 
     boundary_conditions = [
         (x_in, y_in, t_in, Re_in, theta_in, {
@@ -546,23 +620,16 @@ def generate_boundary_conditions(device):
             'v': {'type': 'Dirichlet', 'value': v_in},
             'k': {'type': 'Dirichlet', 'value': k_in},
             'omega': {'type': 'Dirichlet', 'value': omega_in},
-            'c': {'type': 'Dirichlet', 'value': c_in}
         }),
-        (x_sym, y_sym_top, t_sym, Re_sym, theta_sym, {
+        (x_sym, y_sym, t_sym, Re_sym, theta_sym, {
             'u': {'type': 'Neumann', 'dir_deriv': 'y', 'value': u_sym},
-            'v': {'type': 'Dirichlet', 'value': v_sym},
             'v': {'type': 'Neumann', 'dir_deriv': 'y', 'value': v_sym},
             'p': {'type': 'Neumann', 'dir_deriv': 'y', 'value': p_sym},
             'k': {'type': 'Neumann', 'dir_deriv': 'y', 'value': k_sym},
             'omega': {'type': 'Neumann', 'dir_deriv': 'y', 'value': omega_sym}
         }),
-        (x_sym, y_sym_bottom, t_sym, Re_sym, theta_sym, {
-            'u': {'type': 'Neumann', 'dir_deriv': 'y', 'value': u_sym},
-            'v': {'type': 'Dirichlet', 'value': v_sym},
-            'v': {'type': 'Neumann', 'dir_deriv': 'y', 'value': v_sym},
-            'p': {'type': 'Neumann', 'dir_deriv': 'y', 'value': p_sym},
-            'k': {'type': 'Neumann', 'dir_deriv': 'y', 'value': k_sym},
-            'omega': {'type': 'Neumann', 'dir_deriv': 'y', 'value': omega_sym}
+        (x_sym, y_sym, t_sym, Re_sym, theta_sym, {
+            'v': {'type': 'Dirichlet', 'value': v_sym}
         }),
         (x_out, y_out, t_out, Re_out, theta_out, {
             'p': {'type': 'Dirichlet', 'value': p_out}
@@ -573,7 +640,6 @@ def generate_boundary_conditions(device):
             'k': {'type': 'Dirichlet', 'value': k_wall},
         })
     ]
-
     return boundary_conditions
 
 def generate_sparse_data(device):
@@ -595,20 +661,24 @@ def generate_sparse_data(device):
         , v_sparse, p_sparse, k_sparse, omega_sparse, c_sparse
 
 # Define the main function to train the PINN
+# Define the main function to train the PINN
 def main():
     print('------------------------main------------------------------')
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f'Using device: {device}')
-
-    # Define input & output variable ranges for normalization & denormalization
+    # ---- input & output variable ranges for normalization & denormalization ----
     input_min = [-2.5, -2.5, 1, 30e6, 0]
     input_max = [7.5, 2.5, 100, 70e6, 2 * np.pi]
+
     output_min = [-1, -1, -2, 0, 0, 0]
-    output_max = [2, 1, 1, 0.1, 50, 0.01]
+    output_max = [2, 1, 1, 0.1, 30, 0.01]
 
     model = PINN(input_min, input_max, output_min, output_max).to(device)
-    optimizer = optim.Adam(model.parameters(), lr=1e-3)
+    optimizer = optim.Adam(model.parameters(), lr=1e-5)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=100, gamma=0.9)
+
+    U_star = 9.0
+    L_star = 80.0
 
     # Generate boundary and initial conditions
     boundary_conditions = generate_boundary_conditions(device)
@@ -618,20 +688,31 @@ def main():
     sparse_data = generate_sparse_data(device)
     x_sparse, y_sparse, t_sparse, Re_sparse, theta_sparse, u_sparse, v_sparse, p_sparse, k_sparse, omega_sparse, c_sparse = sparse_data
 
-    for epoch in range(10):
-        # Randomly select a subset of sparse data for this training step
-        N2 = 10
-        pde_indices = torch.randperm(len(x_sparse))[:N2]
-        sparse_indices = torch.randperm(len(x_sparse))[:N2]
+    possible_Re_values = torch.tensor([9, 9, 9], dtype=torch.float32) * rho * L_star / mu
 
-        x_pde = x_sparse[pde_indices]
-        y_pde = y_sparse[pde_indices]
-        t_pde = t_sparse[pde_indices]
-        Re_pde = Re_sparse[pde_indices]
-        theta_pde = theta_sparse[pde_indices]
-        sparse_data_subset = [d.squeeze()[sparse_indices].unsqueeze(1) for d in sparse_data]
+    # Default weights
+    weights = default_weights()
+    N3 = 1  # Update weights every N3 epochs
 
-        loss_value = train_step(model, optimizer, x_pde, y_pde, t_pde, Re_pde, theta_pde, boundary_conditions, initial_conditions, sparse_data_subset)
+    for epoch in range(100):
+        # Randomly select a subset of collocation points and sparse data for this training step
+        N2 = 1000
+        pde_and_sparse_indices = torch.randperm(len(x_sparse))[:1000]
+        x_pde = x_sparse[pde_and_sparse_indices]
+        y_pde = y_sparse[pde_and_sparse_indices]
+        t_pde = t_sparse[pde_and_sparse_indices]
+        Re_pde = Re_sparse[pde_and_sparse_indices]
+        theta_pde = theta_sparse[pde_and_sparse_indices]
+        sparse_data_subset = [d.squeeze()[pde_and_sparse_indices].unsqueeze(1) for d in sparse_data]
+
+        loss_value = train_step(model, optimizer, x_pde, y_pde, t_pde, Re_pde\
+, theta_pde, boundary_conditions, initial_conditions, sparse_data_subset, weights)
+
+        if epoch % N3 == 0:
+            new_weights = update_weights(model, x_pde, y_pde, t_pde, Re_pde\
+, theta_pde, boundary_conditions, initial_conditions, sparse_data_subset)
+            for key in weights:
+                weights[key] = 0.99 * weights[key] + 0.01 * new_weights[key]
 
         if epoch % 100 == 0:
             print(f'Epoch {epoch}, Loss: {loss_value}')
@@ -730,6 +811,7 @@ def main():
         if not os.path.isdir(save_dir):
             os.makedirs(save_dir)
         plt.savefig(os.path.join(save_dir, "code06.png"))
+
 
 if __name__ == "__main__":
     main()

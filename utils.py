@@ -15,12 +15,16 @@ def calculate_range_and_divergence(variable, name):
 
 # Check for NaN values in the predicted variables
 def check_for_nan_and_inf(tensor, tensor_name):
-    if torch.isnan(tensor).any():
-        print(f"NaN values found in {tensor_name}")
-    if torch.isinf(tensor).any():
-        print(f"Inf. values found in {tensor_name}")
+    is_nan = torch.isnan(tensor).any()
+    is_inf = torch.isinf(tensor).any()
+    if is_nan and is_inf:
+      print(tensor_name+'  Nan & Inf found')
+    elif is_nan:
+        print(tensor_name+'  Nan found')
+    elif is_inf:
+        print(tensor_name+'  Inf found')
     else:
-      print(tensor_name+', no inf, no Nan')
+        print(tensor_name+'----------------')
 
 def check_tensor_stats(tensor, name):
     if tensor.numel() == 0:
