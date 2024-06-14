@@ -24,13 +24,14 @@ def check_for_nan_and_inf(tensor, tensor_name):
     elif is_inf:
         print(tensor_name+'  Inf found')
     else:
-        print(tensor_name+'----------------')
+        check_tensor_stats(tensor, tensor_name)
 
 def check_tensor_stats(tensor, name):
     if tensor.numel() == 0:
         print(f"{name} is empty")
     else:
-        print(f"{name}: mean={tensor.mean().item()}, std={tensor.std().item()}, min={tensor.min().item()}, max={tensor.max().item()}")
+        print(f"{name: <10} mean={tensor.mean().item(): .3e}, std={tensor.std().item(): .3e}, min={tensor.min().item(): .3e}, max={tensor.max().item(): .3e}")
+
 
 '''
 input_min = [np.min(coords[:, 0]), np.min(coords[:, 1]), 9/80, np.min(Re), np.min(theta)]

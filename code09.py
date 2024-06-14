@@ -186,7 +186,7 @@ def pde_residuals(model, x, y, t, Re, theta):
     x.requires_grad_(True)
     y.requires_grad_(True)
     t.requires_grad_(True)
-    Re.requires_grad_(True)
+#    Re.requires_grad_(True)
     u, v, p, k, omega, c = model(torch.cat([x, y, t, Re, theta], dim=1))
     u = u.view(-1, 1)
     v = v.view(-1, 1)
@@ -196,8 +196,8 @@ def pde_residuals(model, x, y, t, Re, theta):
     c = c.view(-1, 1)
 
     # Clamping k and omega to avoid negative values and extreme values
-    k = torch.clamp(k, min=1e-10, max=10.0) # 10 is like infinity for k (non-dim)
-    omega = torch.clamp(omega, min=1e-10, max=100.0) # 100 is like infinity for omega
+    k = torch.clamp(k, min=1e-10, max=1e6)
+    omega = torch.clamp(omega, min=1e-6, max=1e6)
 
     # Compute first-order derivatives
     u_x = torch.autograd.grad(u, x, grad_outputs=torch.ones_like(u), create_graph=True)[0]
@@ -221,13 +221,27 @@ def pde_residuals(model, x, y, t, Re, theta):
     y_hat = safe_sqrt(x ** 2 + y ** 2) - 40 / L_star  # non-dim(distance) - radius/L_star
     D_omega_plus = smooth_maximum((2 / (sigma_omega2 * omega)) * (k_x * omega_x + k_y * omega_y), torch.tensor(1e-10, device=x.device))
 
-    phi_11 = safe_sqrt(k) / (0.09 * omega * y_hat)
-    phi_12 = 500 / (Re * y_hat ** 2 * omega)
-    phi_13 = 4 * k / (sigma_omega2 * D_omega_plus * y_hat ** 2)
+    eps = 1e-6
+    phi_11 = safe_sqrt(k) / (0.09 * omega * y_hat+eps)
+    phi_12 = 500 / (Re * y_hat ** 2 * omega+eps)
+    phi_13 = 4 * k / (sigma_omega2 * D_omega_plus * y_hat ** 2+eps)
     phi_1 = smooth_minimum(smooth_maximum(phi_11, phi_12), phi_13)
-    phi_21 = (2 * safe_sqrt(k)) / (0.09 * omega * y_hat)
-    phi_22 = 500 / (Re * y_hat ** 2 * omega)
+    phi_21 = (2 * safe_sqrt(k)) / (0.09 * omega * y_hat+eps)
+    phi_22 = 500 / (Re * y_hat ** 2 * omega+eps)
     phi_2 = smooth_maximum(phi_21, phi_22)
+
+# Clamping mu_t to avoid extreme values
+    phi_11 = torch.clamp(phi_11, min=-1e10, max=1e6)
+    phi_12 = torch.clamp(phi_12, min=-1e10, max=1e6)
+    phi_13 = torch.clamp(phi_13, min=-1e10, max=1e6)
+    phi_1 = torch.clamp(phi_1, min=-1e10, max=1e6)
+    phi_21 = torch.clamp(phi_21, min=-1e10, max=1e6)
+    phi_22 = torch.clamp(phi_22, min=-1e10, max=1e6)
+    phi_2 = torch.clamp(phi_2, min=-1e10, max=1e6)
+
+    dummy_1 = torch.autograd.grad(safe_sqrt(k), y,
+           grad_outputs=torch.ones_like(k), create_graph=True)[0]
+
 
     F1 = torch.tanh(phi_1 ** 4)
     F2 = torch.tanh(phi_2)
@@ -251,6 +265,9 @@ def pde_residuals(model, x, y, t, Re, theta):
     S = safe_sqrt(2 * ((u_x) ** 2 + (v_y) ** 2 + 0.5 * (u_y + v_x) ** 2))
 
     mu_t = k / omega * (1 / smooth_maximum(1 / alpha_star, S * F2 / (a1 * omega)))
+# Clamping mu_t to avoid extreme values
+    mu_t = torch.clamp(mu_t, min=1e-10, max=1e6)
+
     G_k = mu_t * S ** 2
     Y_k = beta_star * k * omega
     G_k_tilde = smooth_minimum(G_k, 10 * beta_star * k * omega)
@@ -260,11 +277,16 @@ def pde_residuals(model, x, y, t, Re, theta):
     D_omega = 2 * (1 - F1) * (sigma_omega2 / omega) * (k_x * omega_x + k_y * omega_y)
 
     continuity_residual = u_x + v_y
+    x_mom_x = (1/Re + mu_t) * (4/3 * u_x - 2/3 * v_y)
+# Zero out values in x_mom_x that are smaller than the threshold
+    x_mom_x = torch.where(torch.abs(x_mom_x) < 1e-6, torch.tensor(0.0, device=x_mom_x.device), x_mom_x)
 
-    x_mom_gradx = torch.autograd.grad((1/Re + mu_t) * (4/3 * u_x - 2/3 * v_y), x, grad_outputs=torch.ones_like(u_x), create_graph=True)[0]
-    x_mom_grady = torch.autograd.grad((1/Re + mu_t) * (v_x + u_y), y, grad_outputs=torch.ones_like(u_x), create_graph=True)[0]
+    x_mom_y = (1/Re + mu_t) * (v_x + u_y)
+
+
+    x_mom_gradx = torch.autograd.grad(x_mom_x, x, grad_outputs=torch.ones_like(u_x), create_graph=True)[0]
+    x_mom_grady = torch.autograd.grad(x_mom_y, y, grad_outputs=torch.ones_like(u_x), create_graph=True)[0]
     x_momentum_residual = u_t + u * u_x + v * u_y + p_x - x_mom_gradx - x_mom_grady
-
     y_mom_grady = torch.autograd.grad((1/Re + mu_t) * (4/3 * v_y - 2/3 * u_x), y, grad_outputs=torch.ones_like(v_y), create_graph=True)[0]
     y_mom_gradx = torch.autograd.grad((1/Re + mu_t) * (v_x + u_y), x, grad_outputs=torch.ones_like(v_y), create_graph=True)[0]
     y_momentum_residual = v_t + u * v_x + v * v_y + p_y - y_mom_grady - y_mom_gradx
@@ -272,11 +294,11 @@ def pde_residuals(model, x, y, t, Re, theta):
     k_transport_term1 = torch.autograd.grad((1 / Re + mu_t / sigma_k) * k_x, x, grad_outputs=torch.ones_like(k_x), create_graph=True)[0]
     k_transport_term2 = torch.autograd.grad((1 / Re + mu_t / sigma_k) * k_y, y, grad_outputs=torch.ones_like(k_y), create_graph=True)[0]
 
-    # Clamping intermediate transport terms
-    k_transport_term1 = torch.clamp(k_transport_term1, min=-10.0, max=10.0)
-    k_transport_term2 = torch.clamp(k_transport_term2, min=-10.0, max=10.0)
-    G_k = torch.clamp(G_k, min=-10.0, max=10.0)
-    Y_k = torch.clamp(Y_k, min=-10.0, max=10.0)
+# Clamping intermediate transport terms
+#    k_transport_term1 = torch.clamp(k_transport_term1, min=-10.0, max=10.0)
+#   k_transport_term2 = torch.clamp(k_transport_term2, min=-10.0, max=10.0)
+#   G_k = torch.clamp(G_k, min=-10.0, max=10.0)
+#   Y_k = torch.clamp(Y_k, min=-10.0, max=10.0)
 
     k_residual = k_t + u * k_x + v * k_y - k_transport_term1 - k_transport_term2 - G_k + Y_k
 
@@ -293,31 +315,63 @@ def pde_residuals(model, x, y, t, Re, theta):
 
     omega_residual = omega_t + u * omega_x + v * omega_y - omega_transport_term1 - omega_transport_term2 - G_omega + Y_omega - D_omega
     c_residual = c_t + u * c_x + v * c_y - (1 / Re) * (c_x + c_y)  # Convection-diffusion equation
-
-    check_list = {
+# ------------------------------------------------- debug --------------------
+    pde_check_list = {
+        'x':x,
+        'y':y,
+        't':t,
+        'Re':Re,
+        'theta':theta,
         'u': u,
         'v': v,
         'p': p,
         'k': k,
         'omega': omega,
+        'c': c,
         'Re': Re,
+        'theta': theta,
         'u_x': u_x,
-        'v_y': v_y,
         'u_y': u_y,
-        'v_x': v_x,
         'u_t': u_t,
+        'v_x': v_x,
+        'v_y': v_y,
         'v_t': v_t,
-        '*continuity': continuity_residual,
         'p_x': p_x,
         'p_y': p_y,
         'k_x': k_x,
         'k_y': k_y,
-        'S': S,
+        'k_t': k_t,
         'omega_x': omega_x,
         'omega_y': omega_y,
+        'omega_t': omega_t,
+        'c_x': c_x,
+        'c_y': c_y,
+        'c_t': c_t,
+        'y_hat': y_hat,
+        'D_omega_plus': D_omega_plus,
+        'phi_11': phi_11,
+        'phi_12': phi_12,
+        'phi_13': phi_13,
+        'phi_1': phi_1,
+        'phi_21': phi_21,
+        'phi_22': phi_22,
+        'phi_2': phi_2,
+        'F1': F1,
+        'F2': F2,
+        'beta_i': beta_i,
+        'alpha_star_0': alpha_star_0,
+        'alpha_infinity': alpha_infinity,
+        'Re_t': Re_t,
+        'alpha_star': alpha_star,
+        'alpha': alpha,
+        'beta_star_i': beta_star_i,
+        'M_t': M_t,
+        'F_Mt': F_Mt,
+        'beta_star': beta_star,
         'beta': beta,
         'sigma_k': sigma_k,
         'sigma_omega': sigma_omega,
+        'S': S,
         'mu_t': mu_t,
         'G_k': G_k,
         'Y_k': Y_k,
@@ -325,25 +379,26 @@ def pde_residuals(model, x, y, t, Re, theta):
         'G_omega': G_omega,
         'Y_omega': Y_omega,
         'D_omega': D_omega,
+        'continuity_residual': continuity_residual,
+        'dummy_1': dummy_1,
+        'x_mom_x': x_mom_x,
+        'x_mom_y': x_mom_y,
         'x_mom_gradx': x_mom_gradx,
         'x_mom_grady': x_mom_grady,
-        '*x_momentum': x_momentum_residual,
+        'x_momentum_residual': x_momentum_residual,
         'y_mom_grady': y_mom_grady,
         'y_mom_gradx': y_mom_gradx,
-        '*y_momentum': y_momentum_residual,
+        'y_momentum_residual': y_momentum_residual,
         'k_transport_term1': k_transport_term1,
         'k_transport_term2': k_transport_term2,
-        '*k_transport': k_residual,
+        'k_residual': k_residual,
         'omega_transport_term1': omega_transport_term1,
         'omega_transport_term2': omega_transport_term2,
-        '*omega_transport': omega_residual,
-        'c': c,
-        'c_x': c_x,
-        'c_y': c_y,
-        '*c_transport': c_residual
+        'omega_residual': omega_residual,
+        'c_residual': c_residual,
     }
-    for key in check_list:
-        check_for_nan_and_inf(check_list[key], key)
+    for key in pde_check_list:
+        check_for_nan_and_inf(pde_check_list[key], key)
 
 #check_for_nan_and_inf(x_momentum_residual,'x_mom')
 #    check_for_nan_and_inf(y_momentum_residual,'y_mom')
@@ -588,7 +643,7 @@ def generate_boundary_conditions(device):
     Re_sym = torch.full((100, 1), Re_medium).to(device)
     theta_sym = torch.zeros_like(x_sym).to(device)
     u_sym = torch.zeros_like(x_sym).to(device)
-    v_sym = torch.zeros_like(x_sym).to(device) # for both neumann and dirichlet boundary conditions
+    v_sym = torch.zeros_like(x_sym).to(device) # for both neumann and dirichlet
     p_sym = torch.zeros_like(x_sym).to(device)
     k_sym = torch.zeros_like(x_sym).to(device)
     omega_sym = torch.zeros_like(x_sym).to(device)
@@ -647,7 +702,7 @@ def generate_sparse_data(device):
     x_sparse = torch.tensor(np.tile(coords[:,0], len(u_ref)), dtype=torch.float32).unsqueeze(1).to(device)
     y_sparse = torch.tensor(np.tile(coords[:,1], len(u_ref)), dtype=torch.float32).unsqueeze(1).to(device)
     t_sparse = torch.arange(1.0, u_ref.shape[0] + 1.0).\
-        repeat_interleave(u_ref.shape[1]).unsqueeze(1).to(device)* (U_star/L_star)
+        repeat_interleave(u_ref.shape[1]).unsqueeze(1).to(device)*(U_star/L_star)
     Re_sparse = torch.full_like(x_sparse, Re.item()).to(device)
     theta_sparse = torch.zeros_like(x_sparse).to(device)
     u_sparse = torch.tensor(u_ref, dtype=torch.float32).reshape(-1, 1).to(device)
