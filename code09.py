@@ -106,10 +106,10 @@ class PINN(nn.Module):
 
     def forward(self, x):
         x = self.normalization(x)
-        x = torch.tanh(self.fc1(x))
-        x = torch.tanh(self.fc2(x))
-        x = torch.tanh(self.fc3(x))
-        x = torch.tanh(self.fc4(x))
+        x = torch.relu(self.fc1(x))
+        x = torch.relu(self.fc2(x))
+        x = torch.relu(self.fc3(x))
+        x = torch.relu(self.fc4(x))
         outputs = self.fc_out(x)
         outputs = self.denormalization(outputs)
         u, v, p, k, omega, c = outputs[:, 0], outputs[:, 1], outputs[:, 2], outputs[:, 3], outputs[:, 4], outputs[:, 5]
@@ -397,8 +397,8 @@ def pde_residuals(model, x, y, t, Re, theta):
         'omega_residual': omega_residual,
         'c_residual': c_residual,
     }
-    for key in pde_check_list:
-        check_for_nan_and_inf(pde_check_list[key], key)
+#   for key in pde_check_list:
+#       check_for_nan_and_inf(pde_check_list[key], key)
 
 #check_for_nan_and_inf(x_momentum_residual,'x_mom')
 #    check_for_nan_and_inf(y_momentum_residual,'y_mom')
@@ -747,9 +747,9 @@ def main():
 
     # Default weights
     weights = default_weights()
-    N3 = 1  # Update weights every N3 epochs
+    N3 = 10  # Update weights every N3 epochs
 
-    for epoch in range(100):
+    for epoch in range(1000):
         # Randomly select a subset of collocation points and sparse data for this training step
         N2 = 1000
         pde_and_sparse_indices = torch.randperm(len(x_sparse))[:1000]
@@ -767,9 +767,19 @@ def main():
             new_weights = update_weights(model, x_pde, y_pde, t_pde, Re_pde\
 , theta_pde, boundary_conditions, initial_conditions, sparse_data_subset)
             for key in weights:
-                weights[key] = 0.99 * weights[key] + 0.01 * new_weights[key]
+                weights[key] = 0.3 * weights[key] + 0.7 * new_weights[key]
+            # Convert tensors to numpy arrays and format the values
+            weights_str = {
+                key: [f"{w.item():.0e}" for w in value.cpu().numpy()]
+                for key, value in weights.items()
+            }
+            # Print the formatted values
+            print("pde:", ", ".join(weights_str['pde']),
+                  "bc:", ", ".join(weights_str['bc']),
+                  "ic:", ", ".join(weights_str['ic']),
+                  "sparse:", ", ".join(weights_str['sparse']))
 
-        if epoch % 100 == 0:
+        if epoch % 10 == 0:
             print(f'Epoch {epoch}, Loss: {loss_value}')
             save_model(model, 'pinn_model.pth')  # Save model at intervals
 
@@ -820,7 +830,19 @@ def main():
         x_tri = x_pred[triang.triangles].mean(axis=1)
         y_tri = y_pred[triang.triangles].mean(axis=1)
         dist_from_center = np.sqrt((x_tri - center[0]) ** 2 + (y_tri - center[1]) ** 2)
-        triang.set_mask(dist_from_center < radius)
+# Ensure the mask array has the same length as the number of triangles
+        mask = dist_from_center < radius
+# Print debug information
+        mask = mask.squeeze()  # Remove any extra dimensions
+        mask = mask.cpu().numpy().astype(bool)
+        print('-----------------MWMWMWMWMWMWMWMWMWMWMWMWM----------------')
+        print(f"Length of mask: {len(mask)}")
+        print(f"Length of triangles: {len(triang.triangles)}")
+        print(f"Type of mask: {type(mask)}")
+        print(f"Mask shape: {mask.shape}")
+        print(f"Type of triang.triangles: {type(triang.triangles)}")
+        print(f"triang.triangles shape: {triang.triangles.shape}")
+        triang.set_mask(mask)
 
         # Plotting
         fig1 = plt.figure(figsize=(18, 12))
@@ -865,8 +887,7 @@ def main():
         save_dir = os.path.join("figures")  # Adjust this path as necessary
         if not os.path.isdir(save_dir):
             os.makedirs(save_dir)
-        plt.savefig(os.path.join(save_dir, "code06.png"))
-
+        plt.savefig(os.path.join(save_dir, "code09.png"))
 
 if __name__ == "__main__":
     main()
