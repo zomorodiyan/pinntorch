@@ -97,7 +97,8 @@ class PINN(nn.Module):
         self.fc4 = nn.Linear(N1, N1)
         self.fc_out = nn.Linear(N1, 6)  # Combine outputs into a single layer
         self.denormalization = DenormalizationLayer(output_min, output_max)
-        self._initialize_weights()
+        self._initialize_xavier_weights()
+        #self._initialize_xavier_weights()
 
     def forward(self, x):
         x = self.normalization(x)
@@ -110,30 +111,19 @@ class PINN(nn.Module):
         u, v, p, k, omega, c = outputs[:, 0], outputs[:, 1], outputs[:, 2], outputs[:, 3], outputs[:, 4], outputs[:, 5]
         return u, v, p, k, omega, c
 
-    def _initialize_weights(self):
+    def _initialize_xavier_weights(self):
         for m in self.modules():
             if isinstance(m, nn.Linear):
                 nn.init.xavier_uniform_(m.weight)
                 if m.bias is not None:
                     nn.init.zeros_(m.bias)
 
-    '''
-    def _initialize_weights(self):
+    def _initialize_kaiming_weights(self):
         for m in self.modules():
             if isinstance(m, nn.Linear):
                 nn.init.kaiming_uniform_(m.weight, nonlinearity='relu')  # Kaiming initialization for weights
                 if m.bias is not None:
                     nn.init.uniform_(m.bias, -0.1, 0.1)
-
-    '''
-    '''
-    def _initialize_weights(self):
-        for m in self.modules():
-            if isinstance(m, nn.Linear):
-                nn.init.kaiming_uniform_(m.weight, nonlinearity='relu')  # Kaiming initialization for weights
-                if m.bias is not None:
-                    nn.init.uniform_(m.bias, -0.1, 0.1)  # Uniform initialization for biases
-    '''
 
 class NormalizationLayer(nn.Module):
     def __init__(self, input_min, input_max):
@@ -792,7 +782,7 @@ def main():
 
             scheduler.step()
 
-        plot_fields(1.0, model, x_sparse, y_sparse, t_sparse, Re_sparse, theta_sparse)
+        plot_fields(1.0, model, x_sparse, y_sparse, t_sparse, Re_sparse, theta_sparse) # provide U_star to plot dimensional values
 
         '''
         weights_str = {
