@@ -95,7 +95,7 @@ def get_dataset():
 class PINN(nn.Module):
     def __init__(self, input_min, input_max, output_min, output_max):
         super(PINN, self).__init__()
-        N1 = 128  # Number of neurons
+        N1 = 256  # Number of neurons
         self.normalization = NormalizationLayer(input_min, input_max)
         self.fc1 = nn.Linear(5, N1)
         self.fc2 = nn.Linear(N1, N1)
@@ -166,7 +166,6 @@ class DenormalizationLayer(nn.Module):
         if self.output_max.device != x.device:
             self.output_max = self.output_max.to(x.device)
         return x * (self.output_max - self.output_min) + self.output_min
-
 
 def smooth_maximum(a, b, alpha=10):
     b = b.expand_as(a)  # Ensure b has the same shape as a
@@ -437,6 +436,8 @@ def update_weights(model, x, y, t, Re, theta, boundary_conditions, initial_condi
     total_norm = sum([sum(grads) for grads in gradients.values()])
     weights = {key: torch.tensor([total_norm / grad for grad in grads], device=device) for key, grads in gradients.items()}
 
+    for key in weights:
+        weights[key] = 0.3 * weights[key] + 0.7 * new_weights[key]
     return weights
 
 # Function to return default weights
@@ -724,205 +725,83 @@ def loss(model, x, y, t, Re, theta, boundary_conditions, initial_conditions, spa
     return total_loss, [pde_losses, bc_losses, ic_losses, sparse_losses]
 
 def main():
-    print('------------------------main------------------------------')
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f'Using device: {device}')
-    # ---- input & output variable ranges for normalization & denormalization ----
     input_min = [-2.5, -2.5, 1, 30e6, 0]
     input_max = [7.5, 2.5, 100, 70e6, 2 * np.pi]
-
     output_min = [-1, -1, -2, 0, 0, 0]
     output_max = [2, 1, 1, 0.1, 30, 0.01]
 
     model = PINN(input_min, input_max, output_min, output_max).to(device)
     optimizer = optim.Adam(model.parameters(), lr=1e-3, weight_decay=0.01)
-
-    # Define a learning rate scheduler
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=100, gamma=0.9)
-    U_star = 9.0
-    L_star = 80.0
 
-    # Generate boundary and initial conditions
     boundary_conditions = generate_boundary_conditions(device)
     initial_conditions = generate_initial_conditions(device)
-
-    # Generate sparse data
     sparse_data = generate_sparse_data(device)
     x_sparse, y_sparse, t_sparse, Re_sparse, theta_sparse, u_sparse, v_sparse, p_sparse, k_sparse, omega_sparse, c_sparse = sparse_data
 
-    possible_Re_values = torch.tensor([9, 9, 9], dtype=torch.float32) * rho * L_star / mu
-
-    # Default weights
     weights = default_weights()
-    N3 = 1e5  # Update weights every N3 epochs
+    N3 = 1000  # Number of epochs after which weights are updated
 
-    # Set the number of collocation points for each loss part
-    num_pde_points = 10
-    num_bc_points = 1000
-    num_ic_points = 10
-    num_sparse_points = 10
+    run_schedule = [
+        (1000, default_weights()),  # Run for 1000 epochs with initial weights
+        (1000, None),  # Run for 1000 epochs and update weights
+        (1000, None),  # Run for another 1000 epochs with the updated weights
+    ]
 
-    for epoch in range(500):
-        # Randomly select a subset of collocation points for pde
-        pde_indices = torch.randperm(len(x_sparse))[:num_pde_points]
-        pde_data_subset = [d[pde_indices].unsqueeze(1) if len(d.shape) == 1 else d[pde_indices] for d in [x_sparse, y_sparse, t_sparse, Re_sparse, theta_sparse]]
-        x_pde, y_pde, t_pde, Re_pde, theta_pde = pde_data_subset
+    for epochs, initial_weights in run_schedule:
+        if initial_weights is not None:
+            weights = initial_weights
 
-        # Randomly select a subset of sparse data
-        sparse_indices = torch.randperm(len(x_sparse))[:num_sparse_points]
-        sparse_data_subset = [d[sparse_indices].unsqueeze(1) if len(d.shape) == 1 else d[sparse_indices] for d in sparse_data]
+        for epoch in range(epochs):
+            pde_indices = torch.randperm(len(x_sparse))[:10]
+            pde_data_subset = [d[pde_indices].unsqueeze(1) if len(d.shape) == 1 else d[pde_indices] for d in [x_sparse, y_sparse, t_sparse, Re_sparse, theta_sparse]]
+            x_pde, y_pde, t_pde, Re_pde, theta_pde = pde_data_subset
 
-        # Subset boundary conditions to match the number of bc points
-        bc_conditions_subset = []
-        for bc in boundary_conditions:
-            x_bc, y_bc, t_bc, Re_bc, theta_bc, conditions = bc
-            bc_indices = torch.randperm(len(x_bc))[:num_bc_points]
-            subset_conditions = {}
-            for var in conditions:
-                subset_conditions[var] = {
-                    'type': conditions[var]['type'],
-                    'value': conditions[var]['value'][bc_indices]
-                }
-                if 'dir_deriv' in conditions[var]:
-                    subset_conditions[var]['dir_deriv'] = conditions[var]['dir_deriv']
-            bc_subset = (x_bc[bc_indices], y_bc[bc_indices], t_bc[bc_indices], Re_bc[bc_indices], theta_bc[bc_indices], subset_conditions)
-            bc_conditions_subset.append(bc_subset)
+            sparse_indices = torch.randperm(len(x_sparse))[:10]
+            sparse_data_subset = [d[sparse_indices].unsqueeze(1) if len(d.shape) == 1 else d[sparse_indices] for d in sparse_data]
 
-        # Randomly select a subset of collocation points for ic
-        ic_indices = torch.randperm(len(initial_conditions[0]))[:num_ic_points]
-        initial_conditions_subset = [
-            ic[ic_indices] for ic in initial_conditions
-        ]
+            bc_conditions_subset = []
+            for bc in boundary_conditions:
+                x_bc, y_bc, t_bc, Re_bc, theta_bc, conditions = bc
+                bc_indices = torch.randperm(len(x_bc))[:1000]
+                subset_conditions = {}
+                for var in conditions:
+                    subset_conditions[var] = {
+                        'type': conditions[var]['type'],
+                        'value': conditions[var]['value'][bc_indices]
+                    }
+                    if 'dir_deriv' in conditions[var]:
+                        subset_conditions[var]['dir_deriv'] = conditions[var]['dir_deriv']
+                bc_subset = (x_bc[bc_indices], y_bc[bc_indices], t_bc[bc_indices], Re_bc[bc_indices], theta_bc[bc_indices], subset_conditions)
+                bc_conditions_subset.append(bc_subset)
 
-        loss_value = train_step(model, optimizer, x_pde, y_pde, t_pde, Re_pde, theta_pde,
-                                bc_conditions_subset, initial_conditions_subset, sparse_data_subset, weights)
+            ic_indices = torch.randperm(len(initial_conditions[0]))[:10]
+            initial_conditions_subset = [
+                ic[ic_indices] for ic in initial_conditions
+            ]
 
-        if epoch % N3 == 0 and epoch != 0:
-            new_weights = update_weights(model, x_pde, y_pde, t_pde, Re_pde, theta_pde,
-                                         bc_conditions_subset, initial_conditions_subset, sparse_data_subset)
-            for key in weights:
-                weights[key] = 0.3 * weights[key] + 0.7 * new_weights[key]
-            # Convert tensors to numpy arrays and format the values
-            weights_str = {
-                key: [f"{w.item():.0e}" for w in value.cpu().numpy()]
-                for key, value in weights.items()
-            }
-            # Print the formatted values
-            print("pde:", ", ".join(weights_str['pde']),
-                  "bc:", ", ".join(weights_str['bc']),
-                  "ic:", ", ".join(weights_str['ic']),
-                  "sparse:", ", ".join(weights_str['sparse']))
+            loss_value = train_step(model, optimizer, x_pde, y_pde, t_pde, Re_pde, theta_pde,
+                                    bc_conditions_subset, initial_conditions_subset, sparse_data_subset, weights)
 
-        if epoch % 10 == 0:
-            print(f'Epoch {epoch}, Loss: {loss_value}')
-            save_model(model, 'pinn_model.pth')  # Save model at intervals
+            if epoch % 10 == 0:
+                print(f'Epoch {epoch}, Loss: {loss_value}')
+                save_model(model, 'pinn_model.pth')
 
-        scheduler.step()  # Update the learning rate
+            scheduler.step()
 
-    # Plot the u field at time zero
-    with torch.no_grad():
-        # Use the first 13001 elements of sparse_data for prediction
-        x_pred = x_sparse[:13001]
-        y_pred = y_sparse[:13001]
-        t_pred = t_sparse[:13001]
-        Re_pred = Re_sparse[:13001]
-        theta_pred = theta_sparse[:13001]
-
-        check_tensor_stats(x_pred, 'x_pred')
-        check_tensor_stats(y_pred, 'y_pred')
-        check_tensor_stats(t_pred, 't_pred')
-        check_tensor_stats(Re_pred, 'Re_pred')
-        check_tensor_stats(theta_pred, 'theta_pred')
-
-        # Predict values using the neural network
-        u_pred, v_pred, p_pred, k_pred, omega_pred, c_pred = model(torch.cat([x_pred, y_pred, t_pred, Re_pred, theta_pred], dim=1))
-
-        check_tensor_stats(u_pred, 'u_pred')
-        check_tensor_stats(v_pred, 'v_pred')
-        check_tensor_stats(p_pred, 'p_pred')
-        check_tensor_stats(k_pred, 'k_pred')
-        check_tensor_stats(omega_pred, 'omega_pred')
-        check_tensor_stats(c_pred, 'c_pred')
-
-        # Convert predictions to numpy arrays for plotting
-        u_pred = u_pred.cpu().numpy()
-        v_pred = v_pred.cpu().numpy()
-        p_pred = p_pred.cpu().numpy()
-        k_pred = k_pred.cpu().numpy()
-        omega_pred = omega_pred.cpu().numpy()
-        c_pred = c_pred.cpu().numpy()
-        x_pred = x_pred.cpu()
-        y_pred = y_pred.cpu()
-
-        # Triangulation for plotting
-        triang = tri.Triangulation(x_pred.squeeze(), y_pred.squeeze())
-
-        # Mask the triangles inside the circle
-        center = (0.0, 0.0)
-        radius = 40.0 / L_star
-
-        x_tri = x_pred[triang.triangles].mean(axis=1)
-        y_tri = y_pred[triang.triangles].mean(axis=1)
-        dist_from_center = np.sqrt((x_tri - center[0]) ** 2 + (y_tri - center[1]) ** 2)
-        # Ensure the mask array has the same length as the number of triangles
-        mask = dist_from_center < radius
-        # Print debug information
-        mask = mask.squeeze()  # Remove any extra dimensions
-        mask = mask.cpu().numpy().astype(bool)
-        print('-----------------MWMWMWMWMWMWMWMWMWMWMWMWM----------------')
-        print(f"Length of mask: {len(mask)}")
-        print(f"Length of triangles: {len(triang.triangles)}")
-        print(f"Type of mask: {type(mask)}")
-        print(f"Mask shape: {mask.shape}")
-        print(f"Type of triang.triangles: {type(triang.triangles)}")
-        print(f"triang.triangles shape: {triang.triangles.shape}")
-        triang.set_mask(mask)
-
-        # Plotting
-        fig1 = plt.figure(figsize=(18, 12))
-
-        plt.subplot(3, 2, 1)
-        plt.tricontourf(triang, u_pred.squeeze(), cmap='jet', levels=100)
-        plt.colorbar()
-        plt.title('Predicted $u$')
-        plt.tight_layout()
-
-        plt.subplot(3, 2, 2)
-        plt.tricontourf(triang, v_pred.squeeze(), cmap='jet', levels=100)
-        plt.colorbar()
-        plt.title('Predicted $v$')
-        plt.tight_layout()
-
-        plt.subplot(3, 2, 3)
-        plt.tricontourf(triang, p_pred.squeeze(), cmap='jet', levels=100)
-        plt.colorbar()
-        plt.title('Predicted $p$')
-        plt.tight_layout()
-
-        plt.subplot(3, 2, 4)
-        plt.tricontourf(triang, k_pred.squeeze(), cmap='jet', levels=100)
-        plt.colorbar()
-        plt.title('Predicted $k$')
-        plt.tight_layout()
-
-        plt.subplot(3, 2, 5)
-        plt.tricontourf(triang, omega_pred.squeeze(), cmap='jet', levels=100)
-        plt.colorbar()
-        plt.title('Predicted $omega$')
-        plt.tight_layout()
-
-        plt.subplot(3, 2, 6)
-        plt.tricontourf(triang, c_pred.squeeze(), cmap='jet', levels=100)
-        plt.colorbar()
-        plt.title('Predicted $c$')
-        plt.tight_layout()
-
-        # Save directory
-        save_dir = os.path.join("figures")  # Adjust this path as necessary
-        if not os.path.isdir(save_dir):
-            os.makedirs(save_dir)
-        plt.savefig(os.path.join(save_dir, "code10.png"))
+        new_weights = update_weights(model, x_pde, y_pde, t_pde, Re_pde, theta_pde,
+                                       bc_conditions_subset, initial_conditions_subset, sparse_data_subset)
+        for key in weights:
+            weights[key] = 0.3 * weights[key] + 0.7 * new_weights[key]
+        weights_str = {
+            key: [f"{w.item():.0e}" for w in value.cpu().numpy()]
+            for key, value in weights.items()
+        }
+        print("pde:", ", ".join(weights_str['pde']),
+              "bc:", ", ".join(weights_str['bc']),
+              "ic:", ", ".join(weights_str['ic']),
+              "sparse:", ", ".join(weights_str['sparse']))
 
 if __name__ == "__main__":
     main()
-
