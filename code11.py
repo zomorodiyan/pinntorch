@@ -1,14 +1,12 @@
-import os
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.tri as tri
 import torch.nn.functional as F
 from utils import calculate_range_and_divergence
 from utils import check_for_nan_and_inf
 from utils import check_tensor_stats
+from utils import plot_fields
 #from monitor import ActivationMonitor
 from monitor import forward_hook
 from monitor import register_hooks
@@ -63,10 +61,6 @@ T = 297.15  # K
 #U_star = 9.0  # [m/s] velocity
 #L_star = 80.0  # [m] diameter
 #Re_medium = rho * U_star * L_star / mu
-
-# Define a function to check if points are inside the circle
-def inside_circle(x, y, center_x=0, center_y=0, radius=40):
-    return (x - center_x) ** 2 + (y - center_y) ** 2 < radius ** 2
 
 def get_dataset():
     file = "data/unsteady_nmh.npy"
@@ -191,6 +185,7 @@ def ensure_positive(tensor, epsilon=1e-10):
 def pde_residuals(model, x, y, t, Re, theta):
     L_star = 80.0
     U_star = 9.0
+    radius = 40/L_star
     x.requires_grad_(True)
     y.requires_grad_(True)
     t.requires_grad_(True)
@@ -226,7 +221,7 @@ def pde_residuals(model, x, y, t, Re, theta):
     c_y = torch.autograd.grad(c, y, grad_outputs=torch.ones_like(c), create_graph=True)[0]
     c_t = torch.autograd.grad(c, t, grad_outputs=torch.ones_like(c), create_graph=True)[0]
 
-    y_hat = safe_sqrt(x ** 2 + y ** 2) - 40 / L_star  # non-dim(distance) - radius/L_star
+    y_hat = safe_sqrt(x ** 2 + y ** 2) - radius  # non-dim(distance) - non-dim(radius)
     D_omega_plus = smooth_maximum((2 / (sigma_omega2 * omega)) * (k_x * omega_x + k_y * omega_y), torch.tensor(1e-10, device=x.device))
 
     eps = 1e-6
@@ -239,13 +234,20 @@ def pde_residuals(model, x, y, t, Re, theta):
     phi_2 = smooth_maximum(phi_21, phi_22)
 
 # Clamping mu_t to avoid extreme values
-    phi_11 = torch.clamp(phi_11, min=-1e10, max=1e6)
-    phi_12 = torch.clamp(phi_12, min=-1e10, max=1e6)
-    phi_13 = torch.clamp(phi_13, min=-1e10, max=1e6)
-    phi_1 = torch.clamp(phi_1, min=-1e10, max=1e6)
-    phi_21 = torch.clamp(phi_21, min=-1e10, max=1e6)
-    phi_22 = torch.clamp(phi_22, min=-1e10, max=1e6)
-    phi_2 = torch.clamp(phi_2, min=-1e10, max=1e6)
+#   phi_11 = torch.clamp(phi_11, min=-1e6, max=1e6)
+#   phi_12 = torch.clamp(phi_12, min=-1e6, max=1e6)
+#   phi_13 = torch.clamp(phi_13, min=-1e6, max=1e6)
+#   phi_1 = torch.clamp(phi_1, min=-1e6, max=1e6)
+#   phi_21 = torch.clamp(phi_21, min=-1e6, max=1e6)
+#   phi_22 = torch.clamp(phi_22, min=-1e6, max=1e6)
+#   phi_2 = torch.clamp(phi_2, min=-1e6, max=1e6)
+#   phi_11 = torch.clamp(phi_11, min=-1e10, max=1e6)
+#   phi_12 = torch.clamp(phi_12, min=-1e10, max=1e6)
+#   phi_13 = torch.clamp(phi_13, min=-1e10, max=1e6)
+#   phi_1 = torch.clamp(phi_1, min=-1e10, max=1e6)
+#   phi_21 = torch.clamp(phi_21, min=-1e10, max=1e6)
+#   phi_22 = torch.clamp(phi_22, min=-1e10, max=1e6)
+#   phi_2 = torch.clamp(phi_2, min=-1e10, max=1e6)
 
     dummy_1 = torch.autograd.grad(safe_sqrt(k), y,
            grad_outputs=torch.ones_like(k), create_graph=True)[0]
@@ -744,9 +746,9 @@ def main():
     N3 = 1000  # Number of epochs after which weights are updated
 
     run_schedule = [
-        (1000, default_weights()),  # Run for 1000 epochs with initial weights
-        (1000, None),  # Run for 1000 epochs and update weights
-        (1000, None),  # Run for another 1000 epochs with the updated weights
+        (10, default_weights()),  # Run for 1000 epochs with initial weights
+        (10, None),  # Run for 1000 epochs and update weights
+        (10, None),  # Run for another 1000 epochs with the updated weights
     ]
 
     for epochs, initial_weights in run_schedule:
@@ -790,10 +792,9 @@ def main():
 
             scheduler.step()
 
-        new_weights = update_weights(model, x_pde, y_pde, t_pde, Re_pde, theta_pde,
-                                       bc_conditions_subset, initial_conditions_subset, sparse_data_subset)
-        for key in weights:
-            weights[key] = 0.3 * weights[key] + 0.7 * new_weights[key]
+        plot_fields(1.0, model, x_sparse, y_sparse, t_sparse, Re_sparse, theta_sparse)
+
+        '''
         weights_str = {
             key: [f"{w.item():.0e}" for w in value.cpu().numpy()]
             for key, value in weights.items()
@@ -802,6 +803,7 @@ def main():
               "bc:", ", ".join(weights_str['bc']),
               "ic:", ", ".join(weights_str['ic']),
               "sparse:", ", ".join(weights_str['sparse']))
+        '''
 
 if __name__ == "__main__":
     main()
