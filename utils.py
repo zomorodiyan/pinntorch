@@ -35,7 +35,8 @@ def check_tensor_stats(tensor, name):
     else:
         print(f"{name: <10} mean={tensor.mean().item(): .3e}, std={tensor.std().item(): .3e}, min={tensor.min().item(): .3e}, max={tensor.max().item(): .3e}")
 
-def plot_fields(time, model, x_sparse, y_sparse, t_sparse, Re_sparse, theta_sparse, save_dir="figures"):
+def plot_fields(time, model, x_sparse, y_sparse, t_sparse, Re_sparse,
+                theta_sparse, name = '_', U_star = None, save_dir="figures"):
     with torch.no_grad():
         # Use the first 13001 elements of sparse_data for prediction
         x_pred = x_sparse[:13001]
@@ -43,6 +44,7 @@ def plot_fields(time, model, x_sparse, y_sparse, t_sparse, Re_sparse, theta_spar
         t_pred = t_sparse[:13001].fill_(time)
         Re_pred = Re_sparse[:13001]
         theta_pred = theta_sparse[:13001]
+        L_star = 80.0
 
         check_tensor_stats(x_pred, 'x_pred')
         check_tensor_stats(y_pred, 'y_pred')
@@ -70,12 +72,19 @@ def plot_fields(time, model, x_sparse, y_sparse, t_sparse, Re_sparse, theta_spar
         x_pred = x_pred.cpu()
         y_pred = y_pred.cpu()
 
+        # dimensionalize the predictions if U_star is provided
+        if U_star is not None:
+            u_pred = u_pred * U_star
+            v_pred = v_pred * U_star
+            p_pred = p_pred * U_star**2
+            k_pred = k_pred * U_star**2
+            omega_pred = omega_pred * L_U
+
         # Triangulation for plotting
         triang = tri.Triangulation(x_pred.squeeze(), y_pred.squeeze())
 
         # Mask the triangles inside the circle
         center = (0.0, 0.0)
-        L_star = 80.0
         radius = 40.0 / L_star
 
         x_tri = x_pred[triang.triangles].mean(axis=1)
@@ -129,5 +138,16 @@ def plot_fields(time, model, x_sparse, y_sparse, t_sparse, Re_sparse, theta_spar
         # Save the figure
         if not os.path.isdir(save_dir):
             os.makedirs(save_dir)
-        plt.savefig(os.path.join(save_dir, f"code11_fields_at_time_{time}.png"))
+        plt.savefig(os.path.join(save_dir, f"{name}_fields_time:_{time}.png"))
+
+        return fig1
+
+def formatted_print(*args):
+    formatted_args = []
+    for arg in args:
+        if isinstance(arg, float):
+            formatted_args.append(f"{arg:.3g}")
+        else:
+            formatted_args.append(str(arg))
+    print(*formatted_args)
 
