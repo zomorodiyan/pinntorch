@@ -355,7 +355,8 @@ def pde_residuals(model, x, y, t, Re, theta):
 
     return continuity_residual, x_momentum_residual, y_momentum_residual, k_residual, omega_residual, c_residual
 
-def update_weights(model, x, y, t, Re, theta, boundary_conditions, initial_conditions, sparse_data, weights):
+def update_weights(model, inputs, boundary_conditions, initial_conditions, sparse_data, weights):
+    x, y, t, Re, theta = inputs
     # Reset gradients for the model
     model.zero_grad()
 
@@ -431,7 +432,8 @@ bc_ic_weights = {
         'sparse': torch.tensor([0.0] * 6, device=device)
     }
 
-def train_step(model, optimizer, x, y, t, Re, theta, boundary_conditions, initial_conditions, sparse_data, weights):
+def train_step(model, optimizer, pde_input_data, boundary_conditions, initial_conditions, sparse_data, weights):
+    x, y, t, Re, theta = pde_input_data
     optimizer.zero_grad()
     total_loss, _ = loss(model, x, y, t, Re, theta, boundary_conditions, initial_conditions, sparse_data, weights)
 
@@ -677,8 +679,8 @@ def loss(model, x, y, t, Re, theta, boundary_conditions, initial_conditions, spa
     loss_sparse = sum([weights['sparse'][i] * sparse_losses[i] for i in range(len(sparse_losses))])
 
     total_loss = loss_pde + loss_bc + loss_ic + loss_sparse
-    formatted_print('bc ', *[bc_losses[i].item() for i in range(len(bc_losses))])
-    formatted_print('ic ', *[ic_losses[i].item() for i in range(len(ic_losses))])
+#   formatted_print('bc ', *[bc_losses[i].item() for i in range(len(bc_losses))])
+#   formatted_print('ic ', *[ic_losses[i].item() for i in range(len(ic_losses))])
 
     formatted_print(total_loss.item(), loss_bc.item(), loss_ic.item(), loss_sparse.item(), loss_pde.item())
     return total_loss, [pde_losses, bc_losses, ic_losses, sparse_losses]
@@ -701,13 +703,13 @@ def main():
     weights = all_ones_weights
 
     run_schedule = [
-        (500, only_bc_weights),
-        (500, bc_ic_weights),
-        (1, None),
+        (1000, only_bc_weights),
+        (1000, bc_ic_weights),
+        (1000, all_ones_weights),
     ]
 
     N_loss_print = 10
-    N_weight_update = 100
+    N_weight_update = 1000
 
     for epochs, initial_weights in run_schedule:
         if initial_weights is not None:
@@ -715,11 +717,11 @@ def main():
 
 
         for epoch in range(epochs):
-            pde_indices = torch.randperm(len(x_sparse))[:10]
+            pde_indices = torch.randperm(len(x_sparse))[:1000]
             pde_data_subset = [d[pde_indices].unsqueeze(1) if len(d.shape) == 1 else d[pde_indices] for d in [x_sparse, y_sparse, t_sparse, Re_sparse, theta_sparse]]
             x_pde, y_pde, t_pde, Re_pde, theta_pde = pde_data_subset
 
-            sparse_indices = torch.randperm(len(x_sparse))[:10]
+            sparse_indices = torch.randperm(len(x_sparse))[:1000]
             sparse_data_subset = [d[sparse_indices].unsqueeze(1) if len(d.shape) == 1 else d[sparse_indices] for d in sparse_data]
 
             bc_conditions_subset = []
@@ -737,22 +739,22 @@ def main():
                 bc_subset = (x_bc[bc_indices], y_bc[bc_indices], t_bc[bc_indices], Re_bc[bc_indices], theta_bc[bc_indices], subset_conditions)
                 bc_conditions_subset.append(bc_subset)
 
-            ic_indices = torch.randperm(len(initial_conditions[0]))[:10]
+            ic_indices = torch.randperm(len(initial_conditions[0]))[:1000]
             initial_conditions_subset = [ic[ic_indices] for ic in initial_conditions]
 
-            loss_value = train_step(model, optimizer, x_pde, y_pde, t_pde, Re_pde, theta_pde, bc_conditions_subset, initial_conditions_subset, sparse_data_subset, weights)
+            loss_value = train_step(model, optimizer, pde_data_subset, bc_conditions_subset, initial_conditions_subset, sparse_data_subset, weights)
 
             if epoch % N_loss_print == 0:
                 formatted_print(f'Epoch {epoch}, Loss: {loss_value}')
                 save_model(model, 'pinn_model.pth')
 
             if epoch % N_weight_update == 0 and epoch != 0:
-                weights = update_weights(model, x_pde, y_pde, t_pde, Re_pde, theta_pde, bc_conditions_subset, initial_conditions_subset, sparse_data_subset, weights)
+                weights = update_weights(model, pde_data_subset, bc_conditions_subset, initial_conditions_subset, sparse_data_subset, weights)
 
             scheduler.step()
 
 
-        plot_fields(1.0, model, x_sparse, y_sparse, t_sparse, Re_sparse, theta_sparse, 'code13_500') # provide U_star to plot dimensional values
+        plot_fields(1.0, model, x_sparse, y_sparse, t_sparse, Re_sparse, theta_sparse, 'code13_10000') # provide U_star to plot dimensional values
 
 
 if __name__ == "__main__":
