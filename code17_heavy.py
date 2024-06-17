@@ -72,13 +72,13 @@ optim_config.grad_accum_steps = 0
 optim_config.clip_norm = 10000.0
 optim_config.weight_decay = 1.0e-4
 
-N_bc = 500
+N_bc = 200
 N_ic = 1000
-N_pde = 1
-N_sparse = 1
+N_pde = 2000
+N_sparse = 2000
 
 N_loss_print = 10
-N_weight_update = 1000
+N_weight_update = 10000000
 N_plot_fields = 1000
 
 # Load dataset
@@ -99,7 +99,7 @@ def get_dataset():
 class PINN(nn.Module):
     def __init__(self, input_min, input_max, output_min, output_max):
         super(PINN, self).__init__()
-        N1 = 256  # Number of neurons
+        N1 = 512  # Number of neurons
         self.normalization = NormalizationLayer(input_min, input_max)
         self.fourier_embedding = FourierEmbedding(input_dims=5, embed_dims=256, scale=1.0)
         self.fc1 = nn.Linear(256, N1)
@@ -114,11 +114,11 @@ class PINN(nn.Module):
     def forward(self, x):
         x = self.normalization(x)
         x = self.fourier_embedding(x)
-        x = torch.gelu(self.fc1(x))
-        x = torch.gelu(self.fc2(x))
-        x = torch.gelu(self.fc3(x))
-        x = torch.gelu(self.fc4(x))
-        x = torch.gelu(self.fc5(x))
+        x = F.gelu(self.fc1(x))
+        x = F.gelu(self.fc2(x))
+        x = F.gelu(self.fc3(x))
+        x = F.gelu(self.fc4(x))
+        x = F.gelu(self.fc5(x))
         outputs = self.fc_out(x)
         outputs = self.denormalization(outputs)
         u, v, p, k, omega, c = outputs[:, 0], outputs[:, 1], outputs[:, 2], outputs[:, 3], outputs[:, 4], outputs[:, 5]
@@ -419,7 +419,7 @@ def update_weights(model, inputs, boundary_conditions, initial_conditions,
     # Determine the maximum value in the weights
     max_weight_value = max(weight.max().item() for weight in weights.values() if weight.max().item() != 0)
     # Set the clamping threshold to 10 times the maximum weight value
-    clamp_threshold = 10 * max_weight_value
+    clamp_threshold = torch.max(2 * max_weight_value, 1000)
 
     # Calculate the total norm, skipping components with zero weights
     total_norm = sum([grad for key, grads in gradients.items() for grad, weight in zip(grads, weights[key]) if weight != 0])
@@ -440,15 +440,13 @@ def update_weights(model, inputs, boundary_conditions, initial_conditions,
 
         # Apply the scaling factor to the updated weights
         max_updated_weight = max(weight_update)
-        if max_updated_weight > clamp_threshold:
-            scaling_factor = clamp_threshold / max_updated_weight
+        if max_updated_weight > 10 * clamp_threshold: # introduced 10 not to shrink weights too much
+            scaling_factor = 10 * clamp_threshold / max_updated_weight
             weight_update = [w * scaling_factor for w in weight_update]
 
         # Ensure weights do not go lower than 1.0, except for those that are zero
-        # Update weights by combining 90% of current weight with 10% of weight update
-        # weight_update = [w if weight == 0 else max(0.9*weight+0.1*w, 1.0) for w, weight in zip(weight_update, weights[key])]
-
-
+        weight_update = [w if weight == 0 else max(w, 1.0) for w, weight in zip(weight_update, weights[key])]
+        weight_update = [min(w, 1000.0) for w in weight_update[key]]
 
         new_weights[key] = torch.tensor(weight_update, device=device)
 
@@ -498,13 +496,25 @@ all_normalized_weights = {
         'sparse': torch.tensor([3.0**-2, 2.0**-2, 3.0**-2, 0.1**-2, 30.0**-2, 0.01**-2], device=device)
     }
 
-bc_super_ic_bc_norm_weights = {
+bc_super_ic_norm_weights = {
+        'pde': torch.tensor([0.0] * 6, device=device),
+        'bc': torch.tensor([3.0**-2, 2.0**-2, 0.1**-2,(30.0)**-2, (3.0*20)**-2, (2.0*20)**-2, (3.0*20)**-2,
+                            (0.1*20)**-2, (30*20)**-2, 2.0**-2, 3.0**-2,
+                            3.0**-2, 2.0**-2, 0.1**-2]*100, device=device),
+        'ic': torch.tensor([3.0**-2, 2.0**-2, 3.0**-2, 0.1**-2, 30.0**-2, 0.01**-2], device=device),
+        'sparse': torch.tensor([0.0] * 6, device=device)
+    }
+
+bc_ic_super_all_norm_weights = {
         'pde': torch.tensor(np.array([3.0**-2, 2.0**-2, 3.0**-2, 0.1**-2,
                                       30.0**-2, 0.01**-2])*10, device=device),
         'bc': torch.tensor([3.0**-2, 2.0**-2, 0.1**-2,(30.0)**-2, (3.0*20)**-2, (2.0*20)**-2, (3.0*20)**-2,
-                            (0.1*20)**-2, (30*20)**-2, 2.0**-2, 3.0**-2, 3.0**-2, 2.0**-2, 0.1**-2], device=device),
-        'ic': torch.tensor([3.0**-2, 2.0**-2, 3.0**-2, 0.1**-2, 30.0**-2, 0.01**-2], device=device),
-        'sparse': torch.tensor([3.0**-2, 2.0**-2, 3.0**-2, 0.1**-2, 30.0**-2, 0.01**-2], device=device)
+                            (0.1*20)**-2, (30*20)**-2, 2.0**-2, 3.0**-2,
+                            3.0**-2, 2.0**-2, 0.1**-2]*100, device=device),
+        'ic': torch.tensor([3.0**-2, 2.0**-2, 3.0**-2, 0.1**-2, 30.0**-2,
+                            0.01**-2]*100, device=device),
+        'sparse': torch.tensor([3.0**-2, 2.0**-2, 3.0**-2, 0.1**-2, 30.0**-2,
+                                0.01**-2], device=device),
     }
 
 def train_step(model, optimizer, pde_inputs, boundary_conditions,
@@ -775,7 +785,7 @@ def loss(model, pde_inputs, boundary_conditions, initial_conditions,
 
     writer.add_scalar('_total_loss', total_loss, epoch)
 
-    # Log boundary condition, initial condition, sparse data and pde losses
+    # Log losses
     writer.add_scalar('bc/_total', loss_bc, epoch)
     for i, bc_loss in enumerate(bc_losses):
         writer.add_scalar(f'bc/{bc_names[i]}', weights['bc'][i] * bc_loss, epoch)
@@ -792,7 +802,8 @@ def loss(model, pde_inputs, boundary_conditions, initial_conditions,
     for i, pde_loss in enumerate(pde_losses):
         writer.add_scalar(f'pde/{pde_names[i]}', weights['pde'][i] * pde_loss, epoch)
 
-    # Log boundary condition, initial condition, pde, and sparse loss weights
+    # Log weights
+    '''
     for i, bc_loss in enumerate(bc_losses):
         writer.add_scalar(f'w_bc/{bc_names[i]}', weights['bc'][i], epoch)
 
@@ -804,11 +815,13 @@ def loss(model, pde_inputs, boundary_conditions, initial_conditions,
 
     for i, pde_loss in enumerate(pde_losses):
         writer.add_scalar(f'w_pde/{pde_names[i]}', weights['pde'][i], epoch)
+    '''
 
+    # Log plots
     if epoch % N_plot_fields == 0:
         inputs = x_0, y_0, t_0, Re_0, theta_0
         time = 1.0
-        fig = plot_fields(time, model, *inputs, f'code16_{epoch}') # provide U_star for dimensional plot
+        fig = plot_fields(time, model, *inputs, f'code17h_{epoch}') # provide U_star for dimensional plot
         writer.add_figure('Predicted Fields', fig, epoch)
 
     return total_loss, [pde_losses, bc_losses, ic_losses, sparse_losses]
@@ -840,12 +853,12 @@ def main():
     weights = all_ones_weights
 
     run_schedule = [
-        (10000, all_normalized_weights),
-        (20000, all_normalized_weights),
-        (20000, all_normalized_weights),
+        (5000, bc_normalized_weights),
+        (5000, bc_super_ic_norm_weights),
+        (40000, bc_ic_super_all_norm_weights),
     ]
 
-    writer = SummaryWriter(log_dir='runs_/c17_r1_lr_e-5_bc_ic_pde_sparse') # TensorBoard
+    writer = SummaryWriter(log_dir='runs/c17h_r1_lr_e-5_bc_ic_pde-sparse') # TensorBoard
 
     tot_epoch = 0
     for epochs, initial_weights in run_schedule:
