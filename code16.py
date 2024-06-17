@@ -65,7 +65,7 @@ optim_config.optimizer = "Adam"
 optim_config.beta1 = 0.9
 optim_config.beta2 = 0.999
 optim_config.eps = 1e-8
-optim_config.learning_rate = 1e-6
+optim_config.learning_rate = 1e-5
 optim_config.decay_rate = 0.9
 optim_config.decay_steps = 2000
 optim_config.grad_accum_steps = 0
@@ -474,7 +474,8 @@ bc_normalized_weights = {
         'sparse': torch.tensor([0.0] * 6, device=device)
     }
 all_normalized_weights = {
-        'pde': torch.tensor(np.array([3.0**-2, 2.0**-2, 3.0**-2, 0.1**-2, 30.0**-2, 0.01**-2])*5, device=device),
+        'pde': torch.tensor(np.array([3.0**-2, 2.0**-2, 3.0**-2, 0.1**-2,
+                                      30.0**-2, 0.01**-2])*100, device=device),
         'bc': torch.tensor([3.0**-2, 2.0**-2, 0.1**-2,(30.0)**-2, (3.0*20)**-2, (2.0*20)**-2, (3.0*20)**-2,
                             (0.1*20)**-2, (30*20)**-2, 2.0**-2, 3.0**-2, 3.0**-2, 2.0**-2, 0.1**-2], device=device),
         'ic': torch.tensor([3.0**-2, 2.0**-2, 3.0**-2, 0.1**-2, 30.0**-2, 0.01**-2], device=device),
@@ -819,7 +820,7 @@ def main():
         (20000, all_normalized_weights),
     ]
 
-    writer = SummaryWriter(log_dir='runs/code16_r2') # TensorBoard
+    writer = SummaryWriter(log_dir='runs/c16_r1_lr_e-5_100pde') # TensorBoard
 
     tot_epoch = 0
     for epochs, initial_weights in run_schedule:
