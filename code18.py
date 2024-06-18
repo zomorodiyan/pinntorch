@@ -59,6 +59,7 @@ mu = 1.7894e-5  # kg/(m*s)
 gamma = 1.4
 R = 287  # m^2/(s^2*K)
 T = 297.15  # K
+L_star = 80.0 # [m] diameter
 
 config = ConfigDict()
 config.optim = optim_config = ConfigDict()
@@ -75,7 +76,7 @@ optim_config.weight_decay = 1.0e-4
 
 N_bc = 200
 N_ic = 1000
-N_pde = 2000
+N_pde = 2009
 N_sparse = 2000
 
 N_loss_print = 10
@@ -195,7 +196,6 @@ def safe_sqrt(tensor, epsilon=1e-16):
 
 # Define the PDE residuals for the SST k-omega model and convection-diffusion equation
 def pde_residuals(model, x, y, t, Re, theta):
-    L_star = 80.0
     U_star = 9.0
     x.requires_grad_(True)
     y.requires_grad_(True)
@@ -554,7 +554,6 @@ def get_nondim_dataset():
     u_ref, v_ref, p_ref, k_ref, omega_ref, c_ref, coords, Re = get_dataset()
 
     U_star = 9.0 # for sim. 0
-    L_star = 80.0 # for sim. 0
 
     T_star = L_star / U_star
 
@@ -604,7 +603,6 @@ def generate_boundary_conditions(device):
     Re_medium = 1.225 * 9.0 * 80.0 / 1.7894e-5
     k_in_value = 3/2*(0.05*9.0)**2/9.0**2
     omega_in_value = 30.0
-    L_star = 80.0
 
     N_each_bk = 20000
     N_bc_in = N_each_bk
@@ -853,7 +851,8 @@ def main():
     boundary_conditions = generate_boundary_conditions(device)
     initial_conditions = generate_initial_conditions(device)
     sparse_data = generate_sparse_data(device)
-    x_sparse, y_sparse, t_sparse, Re_sparse, theta_sparse, u_sparse, v_sparse, p_sparse, k_sparse, omega_sparse, c_sparse = sparse_data
+    x_sparse, y_sparse, t_sparse, Re_sparse, theta_sparse, u_sparse, v_sparse,\
+      p_sparse, k_sparse, omega_sparse, c_sparse = sparse_data
     weights = all_ones_weights
 
     '''
@@ -880,10 +879,17 @@ def main():
 
         for epoch in range(epochs):
             pde_indices = torch.randperm(len(x_sparse))[:N_pde]
-            pde_data_subset = [d[pde_indices].unsqueeze(1) if len(d.shape) ==
-                1 else d[pde_indices] for d in [x_sparse, y_sparse, t_sparse, Re_sparse, theta_sparse]]
-            x_pde, y_pde, t_pde, Re_pde, theta_pde = pde_data_subset
-            pde_data_subset[2] = torch.ones_like(x_pde) + 99 * torch.rand(x_pde.shape, device=device)
+
+            mu_rho_u2 = mu/rho/L_star**2
+            t_pde = (mu_rho_u2 * Re_sparse[pde_indices].squeeze() +
+                     99 * mu_rho_u2 * Re_sparse[pde_indices].squeeze() *
+                     torch.rand(N_pde, device=device)).unsqueeze(1)
+
+            pde_data_subset = [
+                d[pde_indices].unsqueeze(1) if len(d.shape) == 1 else d[pde_indices]
+                if d is not t_pde else d for d in [x_sparse, y_sparse, t_pde, Re_sparse, theta_sparse]
+            ]
+
             bc_conditions_subset = []
             for bc in boundary_conditions:
                 x_bc, y_bc, t_bc, Re_bc, theta_bc, conditions = bc
