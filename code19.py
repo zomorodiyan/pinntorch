@@ -574,7 +574,6 @@ def update_weights(model, inputs, boundary_conditions, initial_conditions,
 
     return new_weights
 
-
 def bc_calc_loss(model, boundary_conditions, criterion):
     bc_losses = []
     for bc in boundary_conditions:
@@ -617,6 +616,60 @@ def bc_calc_loss(model, boundary_conditions, criterion):
                 bc_losses.append(criterion(deriv, value))
     return bc_losses
 
+class CustomDataset(Dataset):
+    def __init__(self, data_array, num_intervals=100):
+        self.data = torch.tensor(data_array, dtype=torch.float32).to(device)
+        self.num_intervals = num_intervals
+        self.interval_size = len(data_array) // num_intervals
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        batch_data = self.data[idx]
+        x_sparse = batch_data[0].unsqueeze(0)
+        y_sparse = batch_data[1].unsqueeze(0)
+        t_sparse = batch_data[2].unsqueeze(0)
+        Re_sparse = batch_data[3].unsqueeze(0)
+        theta_sparse = batch_data[4].unsqueeze(0)
+
+        u_sparse = batch_data[5].unsqueeze(0)
+        v_sparse = batch_data[6].unsqueeze(0)
+        p_sparse = batch_data[7].unsqueeze(0)
+        k_sparse = batch_data[8].unsqueeze(0)
+        omega_sparse = batch_data[9].unsqueeze(0)
+        c_sparse = batch_data[10].unsqueeze(0)
+
+        inputs = (x_sparse, y_sparse, t_sparse, Re_sparse, theta_sparse)
+        outputs = (u_sparse, v_sparse, p_sparse, k_sparse, omega_sparse, c_sparse)
+
+        return inputs, outputs
+
+    def get_batch(self, interval, batch_size):
+        start_idx = (interval - 1) * self.interval_size
+        end_idx = interval * self.interval_size
+        selected_indices = torch.randint(start_idx, end_idx, (batch_size,), device=device)
+
+        batch_data = self.data[selected_indices]
+        x_sparse = batch_data[:, 0].unsqueeze(1)
+        y_sparse = batch_data[:, 1].unsqueeze(1)
+        t_sparse = batch_data[:, 2].unsqueeze(1)
+        Re_sparse = batch_data[:, 3].unsqueeze(1)
+        theta_sparse = batch_data[:, 4].unsqueeze(1)
+
+        u_sparse = batch_data[:, 5].unsqueeze(1)
+        v_sparse = batch_data[:, 6].unsqueeze(1)
+        p_sparse = batch_data[:, 7].unsqueeze(1)
+        k_sparse = batch_data[:, 8].unsqueeze(1)
+        omega_sparse = batch_data[:, 9].unsqueeze(1)
+        c_sparse = batch_data[:, 10].unsqueeze(1)
+
+        inputs = (x_sparse, y_sparse, t_sparse, Re_sparse, theta_sparse)
+        outputs = (u_sparse, v_sparse, p_sparse, k_sparse, omega_sparse, c_sparse)
+
+        return inputs, outputs
+
+
 def main():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     criterion = nn.MSELoss()
@@ -636,6 +689,8 @@ def main():
     )
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=optim_config.decay_steps, gamma=optim_config.decay_rate)
 
+    # Load preprocessed data
+    data_array = np.load("data/preprocessed_data.npy")
     dataset = CustomDataset(data_array)
     weights = all_ones_weights
 
@@ -643,7 +698,7 @@ def main():
         (10000, all_normalized_weights),
     ]
 
-    writer = SummaryWriter(log_dir='runs/c19_lr5_gw') # TensorBoard
+    writer = SummaryWriter(log_dir='runs_/c19_lr5_gw') # TensorBoard
 
     # Initialize temporal weights
     '''
@@ -660,7 +715,6 @@ def main():
         for epoch in range(epochs):
             total_loss = 0
 
-            # Calculate initial condition losses
             inputs_0, outputs_0 = dataset.get_batch(1, batch_size) # interval = 1
             x_0, y_0, t_0, Re_0, theta_0 = inputs_0
             u_0, v_0, p_0, k_0, omega_0, c_0 = outputs_0
@@ -676,7 +730,6 @@ def main():
                 criterion(c_0_pred, c_0)
             ]
 
-            # Iterate over intervals from 1 to 100
             for interval in range(1, 101):
                 interval_loss = 0
                 batch_size = 32
@@ -684,12 +737,11 @@ def main():
                 inputs, outputs = dataset.get_batch(interval, batch_size)
                 x_sparse, y_sparse, t_sparse, Re_sparse, theta_sparse = inputs
                 u_sparse, v_sparse, p_sparse, k_sparse, omega_sparse, c_sparse = outputs
-# bc -------------------------------------------------------------------------
+
                 boundary_conditions = generate_boundary_conditions(batch_size, interval):
                 bc_losses = bc_calc_loss(model, boundary_conditions, criterion)
-# pde ------------------------------------------------------------------------
-                pde_inputs = (x_sparse, y_sparse, t_sparse, Re_sparse, theta_sparse)
 
+                pde_inputs = (x_sparse, y_sparse, t_sparse, Re_sparse, theta_sparse)
                 continuity_residual, x_momentum_residual, y_momentum_residual,\
                   k_residual, omega_residual, c_residual = pde_residuals(model, *pde_inputs)
 
@@ -701,13 +753,14 @@ def main():
                     criterion(omega_residual, torch.zeros_like(omega_residual)),
                     criterion(c_residual, torch.zeros_like(c_residual))
                 ]
-# sparse ---------------------------------------------------------------------
+
                 sparse_data = (x_sparse, y_sparse, t_sparse, Re_sparse, theta_sparse,\
-                               u_sparse, v_sparse, p_sparse, k_sparse, omega_sparse, c_sparse)
+                  u_sparse, v_sparse, p_sparse, k_sparse, omega_sparse, c_sparse)
 
                 u_sparse_pred, v_sparse_pred, p_sparse_pred, k_sparse_pred,\
                   omega_sparse_pred, c_sparse_pred = model(torch.cat(\
                     [x_sparse, y_sparse, t_sparse, Re_sparse, theta_sparse], dim=1))
+
                 sparse_losses = [
                     criterion(u_sparse_pred, u_sparse),
                     criterion(v_sparse_pred, v_sparse),
