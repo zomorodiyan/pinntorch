@@ -700,22 +700,32 @@ def main():
     temporal_weights_bc = torch.ones(100, device=device, requires_grad=True)
     '''
 
+    print(f"main: Allocated Memory: {torch.cuda.memory_allocated() / 1024**2:.2f}",
+      f"MB Reserved Memory: {torch.cuda.memory_reserved() / 1024**2:.2f} MB")
+
     tot_epoch = 0
     for epochs, initial_weights in run_schedule:
         if initial_weights is not None:
             weights = initial_weights
 
-        batch_size = 32
+        batch_size = 256
         for epoch in range(epochs):
             total_loss = 0
+            print(f"epoch: Allocated Memory: {torch.cuda.memory_allocated() / 1024**2:.2f}",
+              f"MB Reserved Memory: {torch.cuda.memory_reserved() / 1024**2:.2f} MB")
 
             inputs_0, outputs_0 = dataset.get_batch(1, batch_size) # interval = 1
             x_0, y_0, t_0, Re_0, theta_0 = inputs_0
             u_0, v_0, p_0, k_0, omega_0, c_0 = outputs_0
 
+            check_tensor_stats(x_0, 'x_0')
+            check_tensor_stats(y_0, 'y_0')
+            check_tensor_stats(t_0, 't_0')
+            check_tensor_stats(Re_0, 'Re_0')
+            check_tensor_stats(theta_0, 'theta_0')
+
             u_0_pred, v_0_pred, p_0_pred, k_0_pred, omega_0_pred, c_0_pred = \
                 model(torch.cat([x_0, y_0, t_0, Re_0, theta_0], dim=1))
-
 
             ic_losses = [
                 criterion(u_0_pred, u_0.squeeze()),
@@ -727,7 +737,8 @@ def main():
             ]
 
             for interval in range(1, 101):
-                print(interval)
+                print(f"interval: Allocated Memory: {torch.cuda.memory_allocated() / 1024**2:.2f}",
+                  f"MB Reserved Memory: {torch.cuda.memory_reserved() / 1024**2:.2f} MB")
                 interval_loss = 0
 
                 inputs, outputs = dataset.get_batch(interval, batch_size)
@@ -789,5 +800,6 @@ def main():
 if __name__ == "__main__":
     main()
 
-#print(f"main: Allocated Memory: {torch.cuda.memory_allocated() / 1024**2:.2f}",
-# f"MB Reserved Memory: {torch.cuda.memory_reserved() / 1024**2:.2f} MB")
+
+def print_formatted_losses(epoch, total_loss, bc_loss, ic_loss, pde_loss, sparse_loss):
+    formatted_print(f"Epoch {epoch}: Total Loss = {total_loss:.6f}, BC Loss = {bc_loss:.6f}, IC Loss = {ic_loss:.6f}, PDE Loss = {pde_loss:.6f}, Sparse Loss = {sparse_loss:.6f}")
