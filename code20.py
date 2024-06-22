@@ -15,6 +15,8 @@ from utils import formatted_print, plot_fields, check_tensor_stats
 from ml_collections import ConfigDict
 from torch.profiler import profile, record_function, ProfilerActivity
 
+import time
+
 print('run J20-19')
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f'Using device: {device}')
@@ -77,14 +79,9 @@ optim_config.grad_accum_steps = 0
 optim_config.clip_norm = 10000.0
 optim_config.weight_decay = 1.0e-4
 
-N_bc = 100
-N_ic = 100
-N_pde = 100
-N_sparse = 100
-
 N_loss_print = 1
 N_save_model = 1000
-N_weight_update = 10
+N_weight_update = 100
 N_plot_fields = 100
 
 def save_model(model, path):
@@ -95,7 +92,7 @@ def generate_boundary_conditions(interval, num_samples):
     k_in_value = 3 / 2 * (0.05 * 9.0) ** 2 / 9.0 ** 2
     omega_in_value = 30.0
 
-    N_each_bc = N_bc
+    N_each_bc = num_samples
     boundary_conditions = []
 
     x_in = torch.full((N_each_bc, 1), -200.0 / L_star).to(device)
@@ -515,16 +512,8 @@ bc_ic_super_all_norm_weights = {
                                 0.01**-2], device=device),
     }
 
-def update_weights(model, inputs, boundary_conditions, initial_conditions,
-                   sparse_data, weights, writer, epoch):
-    x, y, t, Re, theta = inputs
-    # Reset gradients for the model
-    model.zero_grad()
-
-    # Calculate loss components using the loss function
-    _, loss_components = loss(model, inputs, boundary_conditions,
-                              initial_conditions, sparse_data, weights, writer,
-                              epoch)
+def update_weights(gradients):
+    # let's say we have loss_components
 
     gradients = {}
     # Calculate gradients for each loss component type
@@ -663,6 +652,12 @@ class CustomDataset(Dataset):
 
         return inputs, outputs
 
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import time
+from torch.utils.tensorboard import SummaryWriter
+
 def main():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     criterion = nn.MSELoss()
@@ -685,44 +680,33 @@ def main():
     # Load preprocessed data
     data_array = np.load("data/preprocessed_data.npy")
     dataset = CustomDataset(data_array, 5)
-    weights = all_ones_weights
+    weights = {
+        'bc': torch.ones(13, device=device, requires_grad=True),
+        'ic': torch.ones(6, device=device, requires_grad=True),
+        'pde': torch.ones(6, device=device, requires_grad=True),
+        'sparse': torch.ones(6, device=device, requires_grad=True)
+    }
 
     run_schedule = [
         (100, all_normalized_weights),
     ]
 
-    writer = SummaryWriter(log_dir='runs_/c19_lr5_gw') # TensorBoard
-
-    # Initialize temporal weights
-    '''
-    temporal_weights_pde = torch.ones(100, device=device, requires_grad=True)
-    temporal_weights_sparse = torch.ones(100, device=device, requires_grad=True)
-    temporal_weights_bc = torch.ones(100, device=device, requires_grad=True)
-    '''
-
-    print(f"main: Allocated Memory: {torch.cuda.memory_allocated() / 1024**2:.2f}",
-      f"MB Reserved Memory: {torch.cuda.memory_reserved() / 1024**2:.2f} MB")
+    writer = SummaryWriter(log_dir='runs_/c20_lr3_const_weights') # TensorBoard
 
     tot_epoch = 0
     for epochs, initial_weights in run_schedule:
         if initial_weights is not None:
             weights = initial_weights
 
-        batch_size = 256
+        batch_size = 512
         for epoch in range(epochs):
+            epoch_start_time = time.time()
+
             total_loss = 0
-            print(f"epoch: Allocated Memory: {torch.cuda.memory_allocated() / 1024**2:.2f}",
-              f"MB Reserved Memory: {torch.cuda.memory_reserved() / 1024**2:.2f} MB")
 
             inputs_0, outputs_0 = dataset.get_batch(1, batch_size) # interval = 1
             x_0, y_0, t_0, Re_0, theta_0 = inputs_0
             u_0, v_0, p_0, k_0, omega_0, c_0 = outputs_0
-
-            check_tensor_stats(x_0, 'x_0')
-            check_tensor_stats(y_0, 'y_0')
-            check_tensor_stats(t_0, 't_0')
-            check_tensor_stats(Re_0, 'Re_0')
-            check_tensor_stats(theta_0, 'theta_0')
 
             u_0_pred, v_0_pred, p_0_pred, k_0_pred, omega_0_pred, c_0_pred = \
                 model(torch.cat([x_0, y_0, t_0, Re_0, theta_0], dim=1))
@@ -736,9 +720,9 @@ def main():
                 criterion(c_0_pred, c_0.squeeze())
             ]
 
+            ic_total_loss = sum(weights['ic'][i] * ic_losses[i] for i in range(len(ic_losses)))
+
             for interval in range(1, 11):
-                print(f"interval: Allocated Memory: {torch.cuda.memory_allocated() / 1024**2:.2f}",
-                  f"MB Reserved Memory: {torch.cuda.memory_reserved() / 1024**2:.2f} MB")
                 interval_loss = 0
 
                 inputs, outputs = dataset.get_batch(interval, batch_size)
@@ -748,10 +732,11 @@ def main():
                 boundary_conditions = generate_boundary_conditions(interval, batch_size)
                 bc_losses = bc_calc_loss(model, boundary_conditions, criterion)
 
+                bc_total_loss = sum(weights['bc'][i] * bc_losses[i] for i in range(len(bc_losses)))
+
                 pde_inputs = (x_sparse, y_sparse, t_sparse, Re_sparse, theta_sparse)
                 continuity_residual, x_momentum_residual, y_momentum_residual,\
                   k_residual, omega_residual, c_residual = pde_residuals(model, *pde_inputs)
-
 
                 pde_losses = [
                     criterion(continuity_residual, torch.zeros_like(continuity_residual)),
@@ -761,6 +746,8 @@ def main():
                     criterion(omega_residual, torch.zeros_like(omega_residual)),
                     criterion(c_residual, torch.zeros_like(c_residual))
                 ]
+
+                pde_total_loss = sum(weights['pde'][i] * pde_losses[i] for i in range(len(pde_losses)))
 
                 sparse_data = (x_sparse, y_sparse, t_sparse, Re_sparse, theta_sparse,\
                   u_sparse, v_sparse, p_sparse, k_sparse, omega_sparse, c_sparse)
@@ -778,12 +765,72 @@ def main():
                     criterion(c_sparse_pred, c_sparse.squeeze())
                 ]
 
-                interval_loss += sum(pde_losses) + sum(bc_losses) + sum(ic_losses) + sum(sparse_losses)
+                sparse_total_loss = sum(weights['sparse'][i] * sparse_losses[i] for i in range(len(sparse_losses)))
+
+                interval_loss += pde_total_loss + bc_total_loss + ic_total_loss + sparse_total_loss
                 total_loss += interval_loss
 
             optimizer.zero_grad()
             total_loss.backward()
             optimizer.step()
+
+# --- logging ----------------------------------------------------------------
+            epoch_end_time = time.time()
+            epoch_duration = epoch_end_time - epoch_start_time
+            allocated_memory = torch.cuda.memory_allocated() / 1024**2
+            reserved_memory = torch.cuda.memory_reserved() / 1024**2
+
+            grad_norm = sum(p.grad.norm() for p in model.parameters() if p.grad is not None)
+            lr = scheduler.get_last_lr()[0]
+
+            bc_names = [
+                'inlet_u', 'inlet_v', 'inlet_k', 'inlet_omega',
+                'symmetry_u', 'symmetry_v', 'symmetry_p', 'symmetry_k', 'symmetry_omega',
+                'symmetry_v_dirichlet', 'outlet_p', 'wall_u', 'wall_v', 'wall_k' ]
+            ic_names = ['u', 'v', 'p', 'k', 'omega', 'c']
+            sparse_names = ['u', 'v', 'p', 'k', 'omega', 'c']
+            pde_names = ['continuity', 'x_momentum', 'y_momentum', 'k_transport',
+                              'omega_transport', 'convection_diffusion']
+
+            print(f"Epoch {epoch}, Time: {epoch_duration:.2f} seconds, Allocated Memory: {allocated_memory:.2f} MB, Reserved Memory: {reserved_memory:.2f} MB, Grad Norm: {grad_norm:.2f}, LR: {lr:.6f}")
+            writer.add_scalar('Memory/Allocated', allocated_memory, tot_epoch)
+            writer.add_scalar('Memory/Reserved', reserved_memory, tot_epoch)
+            writer.add_scalar('Time/Epoch', epoch_duration, tot_epoch)
+            writer.add_scalar('Gradients/Norm', grad_norm, tot_epoch)
+            writer.add_scalar('LearningRate', lr, tot_epoch)
+
+            writer.add_scalar('_total_loss', total_loss.item(), epoch)
+            writer.add_scalar('bc/_total', bc_total_loss.item(), epoch)
+            for i, bc_loss in enumerate(bc_losses):
+                writer.add_scalar(f'bc/{bc_names[i]}', weights['bc'][i] * bc_loss.item(), epoch)
+
+            writer.add_scalar('ic/_total', ic_total_loss.item(), epoch)
+            for i, ic_loss in enumerate(ic_losses):
+                writer.add_scalar(f'ic/{ic_names[i]}', weights['ic'][i] * ic_loss.item(), epoch)
+
+            writer.add_scalar('sparse/_total', sparse_total_loss.item(), epoch)
+            for i, sparse_loss in enumerate(sparse_losses):
+                writer.add_scalar(f'sparse/{sparse_names[i]}', weights['sparse'][i] * sparse_loss.item(), epoch)
+
+            writer.add_scalar('pde/_total', pde_total_loss.item(), epoch)
+            for i, pde_loss in enumerate(pde_losses):
+                writer.add_scalar(f'pde/{pde_names[i]}', weights['pde'][i] * pde_loss.item(), epoch)
+
+            # Log weights
+            for i in range(len(bc_losses)):
+                writer.add_scalar(f'w_bc/{bc_names[i]}', weights['bc'][i], epoch)
+            for i in range(len(ic_losses)):
+                writer.add_scalar(f'w_ic/{ic_names[i]}', weights['ic'][i], epoch)
+            for i in range(len(sparse_losses)):
+                writer.add_scalar(f'w_sparse/{sparse_names[i]}', weights['sparse'][i], epoch)
+            for i in range(len(pde_losses)):
+                writer.add_scalar(f'w_pde/{pde_names[i]}', weights['pde'][i], epoch)
+
+            if epoch % N_plot_fields == 0:
+                inputs, _ = dataset.get_batch(1, 13001)
+                time_value = 1.0
+                fig = plot_fields(time_value, model, *inputs, f'code17h_{epoch}') # provide U_star for dimensional plot
+                writer.add_figure('Predicted Fields', fig, epoch)
 
             if epoch % N_loss_print == 0:
                 formatted_print(f'Epoch {epoch}, Loss: {total_loss.item()}')
@@ -797,8 +844,6 @@ def main():
             scheduler.step()
             tot_epoch += 1
 
+
 if __name__ == "__main__":
     main()
-
-def print_formatted_losses(epoch, total_loss, bc_loss, ic_loss, pde_loss, sparse_loss):
-    formatted_print(f"Epoch {epoch}: Total Loss = {total_loss:.6f}, BC Loss = {bc_loss:.6f}, IC Loss = {ic_loss:.6f}, PDE Loss = {pde_loss:.6f}, Sparse Loss = {sparse_loss:.6f}")
