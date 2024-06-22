@@ -28,8 +28,8 @@ def preprocess_data(file_paths):
         omega_ref = omega_ref * L_star / U_star
 
         # Clip extreme values
-        k_ref = np.clip(k_ref, 0.0, None)
-        omega_ref = np.clip(omega_ref, 0.0, 30)
+        k_ref = np.clip(k_ref, 1e-8, 0.1)
+        omega_ref = np.clip(omega_ref, 1, 100)
         c_ref = np.clip(c_ref, 1e-6, 0.001)
 
         # Create a large dataset combining all variables
@@ -43,7 +43,7 @@ def preprocess_data(file_paths):
 
 # Preprocess data
 file_paths = ["data/unsteady_emh.npy", "data/unsteady_nemh.npy",
-              "data/unsteady_nwmh.npy", "data/unsteady_nemh.npy",
+              "data/unsteady_nwmh.npy", "data/unsteady_swmh.npy",
               "data/unsteady_smh.npy"]
 data_array = preprocess_data(file_paths)
 
