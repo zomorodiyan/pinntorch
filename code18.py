@@ -76,7 +76,7 @@ optim_config.weight_decay = 1.0e-4
 
 N_bc = 200
 N_ic = 1000
-N_pde = 2009
+N_pde = 2000
 N_sparse = 2000
 
 N_loss_print = 10
