@@ -86,7 +86,7 @@ N_plot_fields = 100
 
 # Load dataset
 def get_dataset():
-    file = "data/unsteady_nmh.npy"
+    file = "data/unsteady_smh.npy"
     data = np.load(file, allow_pickle=True).item()
     u_ref = np.array(data["u"].astype(float))
     v_ref = np.array(data["v"].astype(float))
