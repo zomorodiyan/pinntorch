@@ -95,7 +95,7 @@ def generate_boundary_conditions(interval, num_samples):
     omega_in_value = 100.0 # omega_in is higher but I have cliped omega > 100
 
     t_low, t_high = interval * (100 // N_intervals), (interval + 1) * (100 // N_intervals)
-    possible_theta_values = torch.tensor([0, np.pi/4, np.pi/2, 3*np.pi/4, np.pi,
+    theta_values = torch.tensor([0, np.pi/4, np.pi/2, 3*np.pi/4, np.pi,
                                  5*np.pi/4, 3*np.pi/2, 7*np.pi/4, 2*np.pi], device=device)
 
     N_each_bc = num_samples
@@ -104,20 +104,20 @@ def generate_boundary_conditions(interval, num_samples):
     y_in = torch.linspace(-200 / L_star, 200 / L_star, N_each_bc).view(-1, 1).to(device)
     t_in = torch.randint(t_low, t_high, x_in.size()).float().to(device)
     Re_in = torch.full((N_each_bc, 1), Re_medium).to(device)
-    theta_in = values[torch.randint(len(possible_theta_values), x_in.size(), device=device)]
+    theta_in = theta_values[torch.randint(len(theta_values), x_in.size(), device=device)]
     inputs_in = (x_in, y_in, t_in, Re_in, theta_in)
     conditions_in = {
         'u': {'type': 'Dirichlet', 'value': torch.full((N_each_bc, 1), 1.0).to(device)},
         'v': {'type': 'Dirichlet', 'value': torch.zeros((N_each_bc, 1)).to(device)},
-        'k': {'type': 'Dirichlet', 'value': torch.full((N_each_bc, ), k_in_value).to(device)},
-        'omega': {'type': 'Dirichlet', 'value': torch.full((N_each_bc, 50.0), omega_in_value).to(device)}
+        'k': {'type': 'Dirichlet', 'value': torch.full((N_each_bc, 1), k_in_value).to(device)},
+        'omega': {'type': 'Dirichlet', 'value': torch.full((N_each_bc, 1), omega_in_value).to(device)}
     }
 
     x_sym = torch.linspace(-200 / L_star, 600 / L_star, N_each_bc).view(-1, 1).to(device)
     y_sym = (torch.where(torch.randint(0, 2, (N_each_bc, 1), device=device) == 0, -200.0, 200.0) / L_star).to(device)
     t_sym = torch.randint(t_low, t_high, x_sym.size()).float().to(device)
     Re_sym = torch.full((N_each_bc, 1), Re_medium).to(device)
-    theta_sym = values[torch.randint(len(possible_theta_values), x_sym.size(), device=device)]
+    theta_sym = theta_values[torch.randint(len(theta_values), x_sym.size(), device=device)]
     inputs_sym = (x_sym, y_sym, t_sym, Re_sym, theta_sym)
     conditions_sym = {
         'u': {'type': 'Neumann', 'dir_deriv': 'y', 'value': torch.zeros_like(x_sym).to(device)},
@@ -132,7 +132,7 @@ def generate_boundary_conditions(interval, num_samples):
     y_out = torch.linspace(-200 / L_star, 200 / L_star, N_each_bc).view(-1, 1).to(device)
     t_out = torch.randint(t_low, t_high, x_out.size()).float().to(device)
     Re_out = torch.full((N_each_bc, 1), Re_medium).to(device)
-    theta_out = values[torch.randint(len(possible_theta_values), x_out.size(), device=device)]
+    theta_out = theta_values[torch.randint(len(theta_values), x_out.size(), device=device)]
     inputs_out = (x_out, y_out, t_out, Re_out, theta_out)
     conditions_out = {
         'p': {'type': 'Dirichlet', 'value': torch.zeros((N_each_bc, 1)).to(device)}
@@ -143,7 +143,7 @@ def generate_boundary_conditions(interval, num_samples):
     y_wall = (40 / L_star * torch.sin(theta_rand)).view(-1, 1).to(device)
     t_wall = torch.randint(t_low, t_high, x_wall.size()).float().to(device)
     Re_wall = torch.full((N_each_bc, 1), Re_medium).to(device)
-    theta_wall = values[torch.randint(len(possible_theta_values), x_wall.size(), device=device)]
+    theta_wall = theta_values[torch.randint(len(theta_values), x_wall.size(), device=device)]
     inputs_wall = (x_wall, y_wall, t_wall, Re_wall, theta_wall)
     conditions_wall = {
         'u': {'type': 'Dirichlet', 'value': torch.zeros_like(x_wall).to(device)},
