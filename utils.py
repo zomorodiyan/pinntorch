@@ -35,32 +35,13 @@ def check_tensor_stats(tensor, name):
     else:
         print(f"{name: <10} mean={tensor.mean().item(): .3e}, std={tensor.std().item(): .3e}, min={tensor.min().item(): .3e}, max={tensor.max().item(): .3e}")
 
-def plot_fields(time, model, x_sparse, y_sparse, t_sparse, Re_sparse,
-                theta_sparse, name = '_', U_star = None, save_dir="figures"):
+
+def plot_fields(time, model, x, y, t, Re, theta, name = 'new_fig', U_star = None, save_dir="figures"):
     with torch.no_grad():
-        # Use the first 13001 elements of sparse_data for prediction
-        x_pred = x_sparse[:13001]
-        y_pred = y_sparse[:13001]
-        t_pred = t_sparse[:13001].fill_(time)
-        Re_pred = Re_sparse[:13001]
-        theta_pred = theta_sparse[:13001]
         L_star = 80.0
 
-        check_tensor_stats(x_pred, 'x_pred')
-        check_tensor_stats(y_pred, 'y_pred')
-        check_tensor_stats(t_pred, 't_pred')
-        check_tensor_stats(Re_pred, 'Re_pred')
-        check_tensor_stats(theta_pred, 'theta_pred')
-
-        # Predict values using the neural network
-        u_pred, v_pred, p_pred, k_pred, omega_pred, c_pred = model(torch.cat([x_pred, y_pred, t_pred, Re_pred, theta_pred], dim=1))
-
-        check_tensor_stats(u_pred, 'u_pred')
-        check_tensor_stats(v_pred, 'v_pred')
-        check_tensor_stats(p_pred, 'p_pred')
-        check_tensor_stats(k_pred, 'k_pred')
-        check_tensor_stats(omega_pred, 'omega_pred')
-        check_tensor_stats(c_pred, 'c_pred')
+        u_pred, v_pred, p_pred, k_pred, omega_pred, c_pred = model(\
+          torch.cat([x_pred, y_pred, t_pred, Re_pred, theta_pred], dim=1))
 
         # Convert predictions to numpy arrays for plotting
         u_pred = u_pred.cpu().numpy()
@@ -78,7 +59,7 @@ def plot_fields(time, model, x_sparse, y_sparse, t_sparse, Re_sparse,
             v_pred = v_pred * U_star
             p_pred = p_pred * U_star**2
             k_pred = k_pred * U_star**2
-            omega_pred = omega_pred * L_U
+            omega_pred = omega_pred * U_star / L_star
 
         # Triangulation for plotting
         triang = tri.Triangulation(x_pred.squeeze(), y_pred.squeeze())
@@ -102,43 +83,43 @@ def plot_fields(time, model, x_sparse, y_sparse, t_sparse, Re_sparse,
         plt.subplot(3, 2, 1)
         plt.tricontourf(triang, u_pred.squeeze(), cmap='jet', levels=100)
         plt.colorbar()
-        plt.title(f'Predicted $u$ at time {time}')
+        plt.title(f'Predicted $u$ at time {snapshot}s ')
         plt.tight_layout()
 
         plt.subplot(3, 2, 2)
         plt.tricontourf(triang, v_pred.squeeze(), cmap='jet', levels=100)
         plt.colorbar()
-        plt.title(f'Predicted $v$ at time {time}')
+        plt.title(f'Predicted $v$ at time {snapshot}s ')
         plt.tight_layout()
 
         plt.subplot(3, 2, 3)
         plt.tricontourf(triang, p_pred.squeeze(), cmap='jet', levels=100)
         plt.colorbar()
-        plt.title(f'Predicted $p$ at time {time}')
+        plt.title(f'Predicted $p$ at time {snapshot}s')
         plt.tight_layout()
 
         plt.subplot(3, 2, 4)
         plt.tricontourf(triang, k_pred.squeeze(), cmap='jet', levels=100)
         plt.colorbar()
-        plt.title(f'Predicted $k$ at time {time}')
+        plt.title(f'Predicted $k$ at time {snapshot}s')
         plt.tight_layout()
 
         plt.subplot(3, 2, 5)
         plt.tricontourf(triang, omega_pred.squeeze(), cmap='jet', levels=100)
         plt.colorbar()
-        plt.title(f'Predicted $omega$ at time {time}')
+        plt.title(f'Predicted $\omega$ at time {snapshot}s')
         plt.tight_layout()
 
         plt.subplot(3, 2, 6)
         plt.tricontourf(triang, c_pred.squeeze(), cmap='jet', levels=100)
         plt.colorbar()
-        plt.title(f'Predicted $c$ at time {time}')
+        plt.title(f'Predicted $c$ at time {snapshot}s')
         plt.tight_layout()
 
         # Save the figure
         if not os.path.isdir(save_dir):
             os.makedirs(save_dir)
-        plt.savefig(os.path.join(save_dir, f"{name}_fields_time:_{time}.png"))
+        plt.savefig(os.path.join(save_dir, f"{name}_fields_t_{snapshot}_sim_{simulation}.png"))
 
         return fig1
 
