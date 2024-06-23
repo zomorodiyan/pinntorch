@@ -452,7 +452,7 @@ def pde_residuals(model, x, y, t, Re, theta):
 
 all_ones_weights = {
         'pde': torch.tensor([1.0] * 6, device=device),
-        'bc': torch.tensor([1.0] * 14, device=device),
+        'bc': torch.tensor([1.0] * 13, device=device),
         'ic': torch.tensor([1.0] * 6, device=device),
         'sparse': torch.tensor([1.0] * 6, device=device)
     }
@@ -680,6 +680,66 @@ class CustomDataset(Dataset):
 
         return inputs, outputs
 
+def log_metrics(writer, tot_epoch, epoch, total_loss, ic_total_loss, bc_total_loss, sparse_total_loss, pde_total_loss,
+                ic_losses, bc_losses, sparse_losses, pde_losses, weights,
+                model, dataset, lr):
+    allocated_memory = torch.cuda.memory_allocated() / 1024**2
+    reserved_memory = torch.cuda.memory_reserved() / 1024**2
+    grad_norm = sum(p.grad.norm() for p in model.parameters() if p.grad is not None)
+
+    bc_names = [
+        'inlet_u', 'inlet_v', 'inlet_k', 'inlet_omega',
+        'symmetry_u', 'symmetry_v', 'symmetry_p', 'symmetry_k', 'symmetry_omega',
+        'symmetry_v_dirichlet', 'outlet_p', 'wall_u', 'wall_v', 'wall_k' ]
+    ic_names = ['u', 'v', 'p', 'k', 'omega', 'c']
+    sparse_names = ['u', 'v', 'p', 'k', 'omega', 'c']
+    pde_names = ['continuity', 'x_momentum', 'y_momentum', 'k_transport',
+                      'omega_transport', 'convection_diffusion']
+
+    writer.add_scalar('Memory/Allocated', allocated_memory, tot_epoch)
+    writer.add_scalar('Memory/Reserved', reserved_memory, tot_epoch)
+    writer.add_scalar('Gradients/Norm', grad_norm, tot_epoch)
+    writer.add_scalar('LearningRate', lr, tot_epoch)
+    writer.add_scalar('_total_loss', total_loss.item(), epoch)
+    writer.add_scalar('bc/_total', bc_total_loss.item(), epoch)
+    for i, bc_loss in enumerate(bc_losses):
+        writer.add_scalar(f'bc/{bc_names[i]}', weights['bc'][i] * bc_loss.item(), epoch)
+
+    writer.add_scalar('ic/_total', ic_total_loss.item(), epoch)
+    for i, ic_loss in enumerate(ic_losses):
+        writer.add_scalar(f'ic/{ic_names[i]}', weights['ic'][i] * ic_loss.item(), epoch)
+
+    writer.add_scalar('sparse/_total', sparse_total_loss.item(), epoch)
+    for i, sparse_loss in enumerate(sparse_losses):
+        writer.add_scalar(f'sparse/{sparse_names[i]}', weights['sparse'][i] * sparse_loss.item(), epoch)
+
+    writer.add_scalar('pde/_total', pde_total_loss.item(), epoch)
+    for i, pde_loss in enumerate(pde_losses):
+        writer.add_scalar(f'pde/{pde_names[i]}', weights['pde'][i] * pde_loss.item(), epoch)
+
+    # Log weights
+    for i in range(len(bc_losses)):
+        writer.add_scalar(f'w_bc/{bc_names[i]}', weights['bc'][i], epoch)
+    for i in range(len(ic_losses)):
+        writer.add_scalar(f'w_ic/{ic_names[i]}', weights['ic'][i], epoch)
+    for i in range(len(sparse_losses)):
+        writer.add_scalar(f'w_sparse/{sparse_names[i]}', weights['sparse'][i], epoch)
+    for i in range(len(pde_losses)):
+        writer.add_scalar(f'w_pde/{pde_names[i]}', weights['pde'][i], epoch)
+
+    if epoch % N_plot_fields == 0:
+        inputs, _ = dataset.get_batch(1, 13001)
+        time_value = 1.0
+        fig = plot_fields(time_value, model, *inputs, f'code17h_{epoch}')
+        writer.add_figure('Predicted Fields', fig, epoch)
+
+    if epoch % N_loss_print == 0:
+        formatted_print(f'Epoch {epoch}, Loss: {total_loss.item()}')
+
+    if epoch % N_save_model == 0:
+        save_model(model, 'c19_model.pth')
+
+
 
 def main():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -696,11 +756,10 @@ def main():
         lr=optim_config.learning_rate,
         betas=(optim_config.beta1, optim_config.beta2),
         eps=optim_config.eps,
-        weight_decay=1e-4  # Example value for weight decay
+        weight_decay=1e-4
     )
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=optim_config.decay_steps, gamma=optim_config.decay_rate)
 
-    # Load preprocessed data
     data_array = np.load("data/preprocessed_data.npy")
     dataset = CustomDataset(data_array, 5)
     weights = {
@@ -714,7 +773,7 @@ def main():
         (100, all_ones_weights),
     ]
 
-    writer = SummaryWriter(log_dir='runs_/c21') # TensorBoard
+    writer = SummaryWriter(log_dir='runs_/c21')
 
     tot_epoch = 0
     for epochs, initial_weights in run_schedule:
@@ -723,18 +782,13 @@ def main():
 
         batch_size = 128
         for epoch in range(epochs):
-            epoch_start_time = time.time()
-
             total_loss = 0
 
-            # Timing for initial conditions
-            ic_start_time = time.time()
-            inputs_0, outputs_0 = dataset.get_batch(1, batch_size) # interval = 1
+            inputs_0, outputs_0 = dataset.get_batch(1, batch_size)
             x_0, y_0, t_0, Re_0, theta_0 = inputs_0
             u_0, v_0, p_0, k_0, omega_0, c_0 = outputs_0
 
-            u_0_pred, v_0_pred, p_0_pred, k_0_pred, omega_0_pred, c_0_pred = \
-                model(torch.cat([x_0, y_0, t_0, Re_0, theta_0], dim=1))
+            u_0_pred, v_0_pred, p_0_pred, k_0_pred, omega_0_pred, c_0_pred = model(torch.cat([x_0, y_0, t_0, Re_0, theta_0], dim=1))
 
             ic_losses = [
                 criterion(u_0_pred, u_0.squeeze()),
@@ -746,39 +800,19 @@ def main():
             ]
 
             ic_total_loss = sum(weights['ic'][i] * ic_losses[i] for i in range(len(ic_losses)))
-            torch.cuda.synchronize()
-            ic_end_time = time.time()
-            ic_duration = ic_end_time - ic_start_time
-
-            # Timing variables for intervals
-            sampling_duration = 0
-            pde_residual_duration = 0
-            bc_loss_duration = 0
-            sparse_loss_duration = 0
-            sum_losses_duration = 0
 
             for interval in range(N_intervals):
                 interval_loss = 0
 
-                # Timing for sampling
-                sampling_start_time = time.time()
                 inputs, outputs = dataset.get_batch(interval, batch_size)
                 x_sparse, y_sparse, t_sparse, Re_sparse, theta_sparse = inputs
                 u_sparse, v_sparse, p_sparse, k_sparse, omega_sparse, c_sparse = outputs
 
                 boundary_conditions = generate_boundary_conditions(interval, batch_size)
                 pde_inputs = (x_sparse, y_sparse, t_sparse, Re_sparse, theta_sparse)
-                sparse_data = (x_sparse, y_sparse, t_sparse, Re_sparse, theta_sparse,
-                               u_sparse, v_sparse, p_sparse, k_sparse, omega_sparse, c_sparse)
+                sparse_data = (x_sparse, y_sparse, t_sparse, Re_sparse, theta_sparse, u_sparse, v_sparse, p_sparse, k_sparse, omega_sparse, c_sparse)
 
-                torch.cuda.synchronize()
-                sampling_end_time = time.time()
-                sampling_duration += sampling_end_time - sampling_start_time
-
-                # Timing for PDE residual calculation
-                pde_residual_start_time = time.time()
-                continuity_residual, x_momentum_residual, y_momentum_residual,\
-                  k_residual, omega_residual, c_residual = pde_residuals(model, *pde_inputs)
+                continuity_residual, x_momentum_residual, y_momentum_residual, k_residual, omega_residual, c_residual = pde_residuals(model, *pde_inputs)
 
                 pde_losses = [
                     criterion(continuity_residual, torch.zeros_like(continuity_residual)),
@@ -790,23 +824,11 @@ def main():
                 ]
 
                 pde_total_loss = sum(weights['pde'][i] * pde_losses[i] for i in range(len(pde_losses)))
-                torch.cuda.synchronize()
-                pde_residual_end_time = time.time()
-                pde_residual_duration += pde_residual_end_time - pde_residual_start_time
 
-                # Timing for BC loss calculation
-                bc_loss_start_time = time.time()
                 bc_losses = bc_calc_loss(model, boundary_conditions, criterion)
                 bc_total_loss = sum(weights['bc'][i] * bc_losses[i] for i in range(len(bc_losses)))
-                torch.cuda.synchronize()
-                bc_loss_end_time = time.time()
-                bc_loss_duration += bc_loss_end_time - bc_loss_start_time
 
-                # Timing for sparse loss calculation
-                sparse_loss_start_time = time.time()
-                u_sparse_pred, v_sparse_pred, p_sparse_pred, k_sparse_pred,\
-                  omega_sparse_pred, c_sparse_pred = model(torch.cat(
-                    [x_sparse, y_sparse, t_sparse, Re_sparse, theta_sparse], dim=1))
+                u_sparse_pred, v_sparse_pred, p_sparse_pred, k_sparse_pred, omega_sparse_pred, c_sparse_pred = model(torch.cat([x_sparse, y_sparse, t_sparse, Re_sparse, theta_sparse], dim=1))
 
                 sparse_losses = [
                     criterion(u_sparse_pred, u_sparse.squeeze()),
@@ -819,116 +841,27 @@ def main():
 
                 sparse_total_loss = sum(weights['sparse'][i] * sparse_losses[i] for i in range(len(sparse_losses)))
 
-                torch.cuda.synchronize()
-                sparse_loss_end_time = time.time()
-                sparse_loss_duration += sparse_loss_end_time - sparse_loss_start_time
-
-                interval_loss_start_time = time.time()
                 interval_loss += pde_total_loss + bc_total_loss + ic_total_loss + sparse_total_loss
                 total_loss += interval_loss
 
-                torch.cuda.synchronize()
-                interval_loss_end_time = time.time()
-                interval_loss_duration = interval_loss_end_time - interval_loss_start_time
-                sum_losses_duration += interval_loss_duration
-
-            backward_start_time = time.time()
             optimizer.zero_grad()
             total_loss.backward()
-            torch.cuda.synchronize()
-            backward_end_time = time.time()
-            backward_duration = backward_end_time - backward_start_time
-
-            step_start_time = time.time()
             optimizer.step()
-            torch.cuda.synchronize()
-            step_end_time = time.time()
-            step_duration = step_end_time - step_start_time
-
-            # --- logging ----------------------------------------------------------------
-            epoch_end_time = time.time()
-            epoch_duration = epoch_end_time - epoch_start_time
-            allocated_memory = torch.cuda.memory_allocated() / 1024**2
-            reserved_memory = torch.cuda.memory_reserved() / 1024**2
-
-            grad_norm = sum(p.grad.norm() for p in model.parameters() if p.grad is not None)
-            lr = scheduler.get_last_lr()[0]
-
-            bc_names = [
-                'inlet_u', 'inlet_v', 'inlet_k', 'inlet_omega',
-                'symmetry_u', 'symmetry_v', 'symmetry_p', 'symmetry_k', 'symmetry_omega',
-                'symmetry_v_dirichlet', 'outlet_p', 'wall_u', 'wall_v', 'wall_k' ]
-            ic_names = ['u', 'v', 'p', 'k', 'omega', 'c']
-            sparse_names = ['u', 'v', 'p', 'k', 'omega', 'c']
-            pde_names = ['continuity', 'x_momentum', 'y_momentum', 'k_transport',
-                              'omega_transport', 'convection_diffusion']
-
-            print(f"Epoch {epoch}, Time: {epoch_duration:.2f} seconds, IC Time: {ic_duration:.2f} seconds, "
-                  f"Sampling Time: {sampling_duration:.2f} seconds, PDE Residual Time: {pde_residual_duration:.2f} seconds, "
-                  f"BC Loss Time: {bc_loss_duration:.2f} seconds, Sparse Loss Time: {sparse_loss_duration:.2f} seconds, "
-                  f"Backward Time: {backward_duration:.2f} seconds, Step Time: {step_duration:.2f} seconds, "
-                  f"Allocated Memory: {allocated_memory:.2f} MB, Reserved Memory: {reserved_memory:.2f} MB, "
-                  f"Grad Norm: {grad_norm:.2f}, LR: {lr:.6f}")
-            writer.add_scalar('Memory/Allocated', allocated_memory, tot_epoch)
-            writer.add_scalar('Memory/Reserved', reserved_memory, tot_epoch)
-            writer.add_scalar('Time/Epoch', epoch_duration, tot_epoch)
-            writer.add_scalar('Time/IC', ic_duration, tot_epoch)
-            writer.add_scalar('Time/Sampling', sampling_duration, tot_epoch)
-            writer.add_scalar('Time/PDE Residual', pde_residual_duration, tot_epoch)
-            writer.add_scalar('Time/BC Loss', bc_loss_duration, tot_epoch)
-            writer.add_scalar('Time/Sparse Loss', sparse_loss_duration, tot_epoch)
-            writer.add_scalar('Time/Sum Losses', sum_losses_duration, tot_epoch)
-            writer.add_scalar('Time/Backward', backward_duration, tot_epoch)
-            writer.add_scalar('Time/Step', sum_losses_duration, tot_epoch)
-            writer.add_scalar('Gradients/Norm', grad_norm, tot_epoch)
-            writer.add_scalar('LearningRate', lr, tot_epoch)
-
-            writer.add_scalar('_total_loss', total_loss.item(), epoch)
-            writer.add_scalar('bc/_total', bc_total_loss.item(), epoch)
-            for i, bc_loss in enumerate(bc_losses):
-                writer.add_scalar(f'bc/{bc_names[i]}', weights['bc'][i] * bc_loss.item(), epoch)
-
-            writer.add_scalar('ic/_total', ic_total_loss.item(), epoch)
-            for i, ic_loss in enumerate(ic_losses):
-                writer.add_scalar(f'ic/{ic_names[i]}', weights['ic'][i] * ic_loss.item(), epoch)
-
-            writer.add_scalar('sparse/_total', sparse_total_loss.item(), epoch)
-            for i, sparse_loss in enumerate(sparse_losses):
-                writer.add_scalar(f'sparse/{sparse_names[i]}', weights['sparse'][i] * sparse_loss.item(), epoch)
-
-            writer.add_scalar('pde/_total', pde_total_loss.item(), epoch)
-            for i, pde_loss in enumerate(pde_losses):
-                writer.add_scalar(f'pde/{pde_names[i]}', weights['pde'][i] * pde_loss.item(), epoch)
-
-            # Log weights
-            for i in range(len(bc_losses)):
-                writer.add_scalar(f'w_bc/{bc_names[i]}', weights['bc'][i], epoch)
-            for i in range(len(ic_losses)):
-                writer.add_scalar(f'w_ic/{ic_names[i]}', weights['ic'][i], epoch)
-            for i in range(len(sparse_losses)):
-                writer.add_scalar(f'w_sparse/{sparse_names[i]}', weights['sparse'][i], epoch)
-            for i in range(len(pde_losses)):
-                writer.add_scalar(f'w_pde/{pde_names[i]}', weights['pde'][i], epoch)
-
-            if epoch % N_plot_fields == 0:
-                inputs, _ = dataset.get_batch(1, 13001)
-                time_value = 1.0
-                fig = plot_fields(time_value, model, *inputs, f'code17h_{epoch}') # provide U_star for dimensional plot
-                writer.add_figure('Predicted Fields', fig, epoch)
-
-            if epoch % N_loss_print == 0:
-                formatted_print(f'Epoch {epoch}, Loss: {total_loss.item()}')
-
-            if epoch % N_save_model == 0:
-                save_model(model, 'c19_model.pth')
-
-            if epoch % N_weight_update == 0 and epoch != 0:
-                weights = update_weights(model, pde_inputs, boundary_conditions,
-                                         (inputs_0, outputs_0) , sparse_data,
-                                         weights, writer, tot_epoch)
-
             scheduler.step()
             tot_epoch += 1
+
+            if epoch % N_weight_update == 0 and epoch != 0:
+                new_weights = update_weights(model, pde_inputs, boundary_conditions, (inputs_0, outputs_0), sparse_data, weights, writer, tot_epoch)
+                alpha_ = 0.9
+                for key in weights.keys():
+                    weights[key] = alpha_ * weights[key] + (1 - alpha_) * new_weights[key]
+
+
+            log_metrics(writer, tot_epoch, epoch, total_loss, ic_total_loss,
+                        bc_total_loss, sparse_total_loss, pde_total_loss,
+                        ic_losses, bc_losses, sparse_losses, pde_losses,
+                        weights, model, dataset, scheduler.get_last_lr()[0])
+
 
 if __name__ == "__main__":
     main()
