@@ -681,7 +681,7 @@ class IntervalDataLoader:
         return self.num_intervals
 
 def log_metrics(writer, tot_epoch, epoch, total_loss, ic_total_loss, bc_total_loss, sparse_total_loss, pde_total_loss,
-                ic_losses, bc_losses, sparse_losses, pde_losses, weights,
+                ic_losses, bc_losses, sparse_losses, pde_losses, weights, temporal_weights,
                 model, dataset, lr):
     allocated_memory = torch.cuda.memory_allocated() / 1024**2
     reserved_memory = torch.cuda.memory_reserved() / 1024**2
@@ -742,20 +742,10 @@ def log_metrics(writer, tot_epoch, epoch, total_loss, ic_total_loss, bc_total_lo
     if epoch % N_save_model == 0:
         save_model(model, 'c19_model.pth')
 
-def calculate_temporal_weights(eps, previous_losses, current_losses):
-    temporal_weights = {key: [] for key in current_losses.keys()}
-    for key in current_losses.keys():
-        for i in range(len(current_losses[key])):
-            sum_previous_losses = sum(previous_losses[key][j][i] for j in range(len(previous_losses[key])))
-            temporal_weight = 1 if sum_previous_losses == 0 else np.exp(-eps * sum_previous_losses)
-            temporal_weights[key].append(temporal_weight)
-    return temporal_weights
-
 def prepare_inputs_outputs(batch_data):
     inputs = [batch_data[:, i:i+1] for i in range(5)]
     outputs = [batch_data[:, i+5:i+6] for i in range(6)]
     return inputs, outputs
-
 
 def calculate_ic_losses(model, inputs, outputs, criterion):
     # Debug prints
@@ -813,7 +803,7 @@ def main():
 
     data_array = np.load("data/preprocessed_data.npy")
     dataset = CustomDataset(data_array, num_intervals=10)
-    data_loader = IntervalDataLoader(dataset, batch_size=128)
+    data_loader = IntervalDataLoader(dataset, batch_size=256)
 
     tot_epoch = 0
 
@@ -824,7 +814,7 @@ def main():
         for epoch in range(epochs):
             total_loss = 0
 
-            batch_size = 128
+            batch_size = 256
             batch_size_ic = batch_size
             ic_batch = dataset.get_initial_condition_batch(batch_size_ic).to(device)
             ic_inputs, ic_outputs = prepare_inputs_outputs(ic_batch)
@@ -832,6 +822,12 @@ def main():
             ic_total_loss = sum(weights['ic'][i] * ic_losses[i] for i in range(len(ic_losses)))
 
             cumulative_losses = {
+                'pde': torch.zeros(6),
+                'sparse': torch.zeros(6),
+                'bc': torch.zeros(13)
+            }
+
+            log_temporal_weights = {
                 'pde': torch.zeros(6),
                 'sparse': torch.zeros(6),
                 'bc': torch.zeros(13)
@@ -848,35 +844,40 @@ def main():
                 pde_inputs = (x_sparse, y_sparse, t_sparse, Re_sparse, theta_sparse)
 
 
-                losses = {
+                raw_losses = {
                     'pde': torch.zeros(6),
                     'sparse': torch.zeros(6),
                     'bc': torch.zeros(13)
                 }
 
 
-                losses['pde'] = [criterion(residual, torch.zeros_like(residual))
+                raw_losses['pde'] = [criterion(residual, torch.zeros_like(residual))
                               for residual in pde_residuals(model, *pde_inputs)]
 
-                losses['bc'] = bc_calc_loss(model, boundary_conditions, criterion)
+                raw_losses['bc'] = bc_calc_loss(model, boundary_conditions, criterion)
 
-                losses['sparse'] = [criterion(model(torch.cat(inputs, dim=1))[i], outputs[i].squeeze())
+                raw_losses['sparse'] = [criterion(model(torch.cat(inputs, dim=1))[i], outputs[i].squeeze())
                                  for i in range(6)]
 
                 eps_ = 1.0
-                temporal_weights = {key: torch.exp(-eps_ * cumulative_losses[key]) for key in ['bc', 'pde', 'sparse']}
+                temporal_weights = {key: torch.exp(-eps_ * cumulative_losses[key])
+                  for key in ['bc', 'pde', 'sparse']}
 
-                weighted_losses = {key: [loss * temporal_weights[key][i]
-                                         for i, loss in enumerate(losses[key])] for key in ['bc', 'pde', 'sparse']}
+                temporal_weighted_losses = {key: [loss * temporal_weights[key][i]
+                  for i, loss in enumerate(raw_losses[key])] for key in ['bc', 'pde', 'sparse']}
 
                 cumulative_losses = {key: cumulative_losses[key] + torch.tensor(
-                    [loss.item() for loss in weighted_losses[key]]) for key in ['bc', 'pde', 'sparse']}
-                print('interval')
+                    [loss.item() for loss in temporal_weighted_losses[key]]) for key in ['bc', 'pde', 'sparse']}
+                print(interval,end=' ')
                 interval += 1
 
-            sparse_total_loss = sum(weights['sparse'][i] * cumulative_losses['sparse'][i] for i in range(len(weights['sparse'])))
-            pde_total_loss = sum(weights['pde'][i] * cumulative_losses['pde'][i] for i in range(len(weights['pde'])))
-            bc_total_loss = sum(weights['bc'][i] * cumulative_losses['bc'][i] for i in range(len(weights['bc'])))
+            sparse_losses = [weights['sparse'][i] * cumulative_losses['sparse'][i] for i in range(len(weights['sparse']))]
+            pde_losses = [weights['pde'][i] * cumulative_losses['pde'][i] for i in range(len(weights['pde']))]
+            bc_losses = [weights['bc'][i] * cumulative_losses['bc'][i] for i in range(len(weights['bc']))]
+
+            sparse_total_loss = sum(sparse_losses)
+            pde_total_loss = sum(pde_losses)
+            bc_total_loss = sum(bc_losses)
 
             total_loss += ic_total_loss + sparse_total_loss + pde_total_loss + bc_total_loss
 
@@ -885,6 +886,18 @@ def main():
             optimizer.step()
             scheduler.step()
             tot_epoch += 1
+
+            if epoch % N_weight_update == 0 and epoch != 0:
+                new_weights = update_weights(model, pde_inputs, boundary_conditions,\
+                  (inputs_0, outputs_0), sparse_data, weights, writer, tot_epoch)
+                alpha_ = 0.9
+                for key in weights.keys():
+                    weights[key] = alpha_ * weights[key] + (1 - alpha_) * new_weights[key]
+
+            log_metrics(writer, tot_epoch, epoch, total_loss, ic_total_loss,
+                        bc_total_loss, sparse_total_loss, pde_total_loss,
+                        ic_losses, bc_losses, sparse_losses, pde_losses,
+                        weights, log_temporal_weights, model, dataset, scheduler.get_last_lr()[0])
 
 
 if __name__ == "__main__":
