@@ -10,8 +10,6 @@ from torch.utils.data import Dataset, DataLoader
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.tri as tri
-from utils import calculate_range_and_divergence, check_for_nan_and_inf
-from utils import formatted_print, plot_fields, check_tensor_stats
 from ml_collections import ConfigDict
 from torch.profiler import profile, record_function, ProfilerActivity
 import time
@@ -76,9 +74,9 @@ optim_config.clip_norm = 1000.0
 optim_config.weight_decay = 1.0e-4
 
 N_loss_print = 100
-N_save_model = 4900
+N_save_model = 5000
 N_weight_update = 2
-N_plot_fields = 1000
+N_plot_fields = 100
 N_intervals = 10
 
 def save_model(model, path):
@@ -458,21 +456,26 @@ all_ones_weights = {
     }
 
 all_normalized_weights = {
-        'pde': torch.tensor(np.array([3.0**-2, 2.0**-2, 3.0**-2, 0.1**-2, 30.0**-2, 0.01**-2])*10, device=device),
-        'bc': torch.tensor([3.0**-2, 2.0**-2, 0.1**-2, (30.0)**-2, (3.0*20)**-2, (2.0*20)**-2, (3.0*20)**-2,
-                            (0.1*20)**-2, (30*20)**-2, 2.0**-2, 3.0**-2, 3.0**-2, 2.0**-2, 0.1**-2], device=device),
-        'ic': torch.tensor([3.0**-2, 2.0**-2, 3.0**-2, 0.1**-2, 30.0**-2, 0.01**-2], device=device),
-        'sparse': torch.tensor([3.0**-2, 2.0**-2, 3.0**-2, 0.1**-2, 30.0**-2, 0.01**-2], device=device)
-    }
+    'pde': torch.tensor([0.2, 0.1, 0.1, 1.0, 0.01, 10000.0], device=device),
+    # inlet u, v, k, omega (all Dirichlet)
+    'bc': torch.tensor([0.2, 0.1, 0.1, 0.1,
+                        # symmetry_u,v,p,k,omega (all Neumann),v_Dirichlet
+                        0.2, 0.2, 0.2, 0.2, 0.2, 0.2,
+                        # out_p  wall_u,v,k (all Dirichlet)
+                        0.1, 0.2, 0.1, 0.1], device=device),
+    'ic': torch.tensor([0.2, 0.2, 0.2, 0.2, 0.2, 1.0], device=device),
+    'sparse': torch.tensor([0.2, 0.2, 0.2, 0.2, 0.2, 1.0], device=device)
+}
 
 def update_weights(model, pde_inputs, boundary_conditions, initial_conditions, sparse_data, weights, writer, epoch):
     # Define the max allowable weight values and min value for each weight
     inputs_0, outputs_0 = initial_conditions
+    max_weight = 100.0
     max_weights = {
-        'bc': torch.full((14,), 10000.0, device=device),
-        'ic': torch.full((6,), 10000.0, device=device),
-        'pde': torch.full((6,), 10000.0, device=device),
-        'sparse': torch.full((6,), 10000.0, device=device)
+        'bc': torch.full((14,), max_weight, device=device),
+        'ic': torch.full((6,), max_weight, device=device),
+        'pde': torch.full((6,), max_weight, device=device),
+        'sparse': torch.full((6,), max_weight, device=device)
     }
 
     min_weight = 1.0
@@ -491,9 +494,12 @@ def update_weights(model, pde_inputs, boundary_conditions, initial_conditions, s
 
     # Calculate loss components
     ic_losses = [
-        criterion(model(torch.cat(inputs_0, dim=1))[i], outputs_0[i].squeeze())
+        criterion(torch.log(torch.clamp(model(torch.cat(inputs_0, dim=1))[i], min=1e-6)),
+                  torch.log(torch.clamp(outputs_0[i].squeeze(), min=1e-6)))
+        if i > 2 else criterion(model(torch.cat(inputs_0, dim=1))[i], outputs_0[i].squeeze())
         for i in range(6)
     ]
+
 
     bc_losses = bc_calc_loss(model, boundary_conditions, criterion)
     pde_losses = [
@@ -503,10 +509,11 @@ def update_weights(model, pde_inputs, boundary_conditions, initial_conditions, s
 
     inputs_sparse, outputs_sparse = prepare_inputs_outputs(sparse_data)
     sparse_losses = [
-        criterion(model(torch.cat(inputs_sparse, dim=1))[i], outputs_sparse[i].squeeze())
+        criterion(torch.log(torch.clamp(model(torch.cat(inputs_sparse, dim=1))[i], min=1e-6)),
+                  torch.log(torch.clamp(outputs_sparse[i].squeeze(), min=1e-6)))\
+        if i > 2 else criterion(model(torch.cat(inputs_sparse, dim=1))[i], outputs_sparse[i].squeeze())
         for i in range(6)
     ]
-
     normalized_ic_losses = [all_normalized_weights['ic'][i]*ic_losses[i]
                        for i in range(len(all_normalized_weights['ic']))]
     normalized_sparse_losses = [all_normalized_weights['sparse'][i]*sparse_losses[i]
@@ -529,20 +536,20 @@ def update_weights(model, pde_inputs, boundary_conditions, initial_conditions, s
     new_weights = {}
 
     # Update weights based on gradients, clamping if necessary
+    eps_=1e-6
     for key in weights.keys():
         weight_update = []
         for i, (grad, weight) in enumerate(zip(gradients[key], weights[key])):
             if weight != 0:
-                updated_weight = total_norm / grad
+                updated_weight = total_norm / max(grad, eps_)
                 weight_update.append(updated_weight)
             else:
                 weight_update.append(weight.item())
         weight_update = torch.tensor(weight_update, device=device)
 
-        # Scale weights to ensure the largest weight is <= 1000
         max_updated_weight = torch.max(weight_update)
-        if max_updated_weight > 15000:
-            scaling_factor = 10000 / max_updated_weight
+        if max_updated_weight > 150:
+            scaling_factor = 100 / max_updated_weight
             weight_update = weight_update * scaling_factor
 
         weight_update = torch.clamp(weight_update, min=min_weight)
@@ -705,10 +712,127 @@ def log_metrics(writer, tot_epoch, epoch, total_loss, ic_total_loss, bc_total_lo
         writer.add_figure('Predicted Fields', fig, epoch)
 
     if epoch % N_loss_print == 0:
-        formatted_print(f'Epoch {epoch}, Loss: {total_loss.item()}')
+        print(f'Epoch {epoch}, Loss: {total_loss.item()}')
 
     if epoch % N_save_model == 0:
         save_model(model, 'c19_model.pth')
+
+def plot_fields(model, x, y, t, Re, theta, snapshot, simulation, name = 'new_fig', U_star = None, save_dir="figures"):
+    with torch.no_grad():
+        L_star = 80.0
+
+        u, v, p, k, omega, c = model(\
+          torch.cat([x, y, t, Re, theta], dim=1))
+
+        # Convert predictions to numpy arrays for plotting
+        u = u.cpu().numpy()
+        v = v.cpu().numpy()
+        p = p.cpu().numpy()
+        k = k.cpu().numpy()
+        omega = omega.cpu().numpy()
+        c = c.cpu().numpy()
+        x = x.cpu()
+        y = y.cpu()
+
+        # dimensionalize the predictions if U_star is provided
+        if U_star is not None:
+            u = u * U_star
+            v = v * U_star
+            p = p * U_star**2
+            k = k * U_star**2
+            omega = omega * U_star / L_star
+
+        # Triangulation for plotting
+        triang = tri.Triangulation(x.squeeze(), y.squeeze())
+
+        # Mask the triangles inside the circle
+        center = (0.0, 0.0)
+        radius = 40.0 / L_star
+
+        x_tri = x[triang.triangles].mean(axis=1)
+        y_tri = y[triang.triangles].mean(axis=1)
+
+        dist_from_center = np.sqrt((x_tri - center[0]) ** 2 + (y_tri - center[1]) ** 2)
+        mask = dist_from_center < radius
+        mask = mask.squeeze()
+        mask = mask.cpu().numpy().astype(bool)
+        triang.set_mask(mask)
+
+        # Plotting
+        fig1 = plt.figure(figsize=(18, 12))
+
+        plt.subplot(3, 2, 1)
+        plt.tricontourf(triang, u.squeeze(), cmap='jet', levels=100)
+        plt.colorbar()
+        plt.title(f'Predicted $u$ at time {snapshot}s ')
+        plt.tight_layout()
+
+        plt.subplot(3, 2, 2)
+        plt.tricontourf(triang, v.squeeze(), cmap='jet', levels=100)
+        plt.colorbar()
+        plt.title(f'Predicted $v$ at time {snapshot}s ')
+        plt.tight_layout()
+
+        plt.subplot(3, 2, 3)
+        plt.tricontourf(triang, p.squeeze(), cmap='jet', levels=100)
+        plt.colorbar()
+        plt.title(f'Predicted $p$ at time {snapshot}s')
+        plt.tight_layout()
+
+        plt.subplot(3, 2, 4)
+        plt.tricontourf(triang, k.squeeze(), cmap='jet', levels=100)
+        plt.colorbar()
+        plt.title(f'Predicted $k$ at time {snapshot}s')
+        plt.tight_layout()
+
+        plt.subplot(3, 2, 5)
+        plt.tricontourf(triang, omega.squeeze(), cmap='jet', levels=100)
+        plt.colorbar()
+        plt.title(f'Predicted $\omega$ at time {snapshot}s')
+        plt.tight_layout()
+
+        plt.subplot(3, 2, 6)
+        plt.tricontourf(triang, c.squeeze(), cmap='jet', levels=100)
+        plt.colorbar()
+        plt.title(f'Predicted $c$ at time {snapshot}s')
+        plt.tight_layout()
+
+        # Save the figure
+        if not os.path.isdir(save_dir):
+            os.makedirs(save_dir)
+        plt.savefig(os.path.join(save_dir, f"{name}_fields_t_{snapshot}_sim_{simulation}.png"))
+
+        return fig1
+
+def check_tensor_stats(tensor, name):
+    if tensor.numel() == 0:
+        print(f"{name} is empty")
+    else:
+        print(f"{name: <10} mean={tensor.mean().item(): .3e}, std={tensor.std().item(): .3e}, min={tensor.min().item(): .3e}, max={tensor.max().item(): .3e}")
+
+def check_for_nan_and_inf(tensor, tensor_name):
+    is_nan = torch.isnan(tensor).any()
+    is_inf = torch.isinf(tensor).any()
+    if is_nan and is_inf:
+      print(tensor_name+'  Nan & Inf found')
+    elif is_nan:
+        print(tensor_name+'  Nan found')
+    elif is_inf:
+        print(tensor_name+'  Inf found')
+    else:
+        check_tensor_stats(tensor, tensor_name)
+
+def calculate_range_and_divergence(variable, name):
+    var_min = np.min(variable)
+    var_max = np.max(variable)
+    var_range = var_max - var_min
+    var_std = np.std(variable)
+
+    print(f'{name}')
+    print('Type: ', type(variable), '  Shape: ', variable.shape)
+    print(f'{name} Range: min = {var_min}, max = {var_max}, range = {var_range}')
+    print(f'{name} Divergence (Standard Deviation): {var_std}')
+    print('')
 
 def prepare_inputs_outputs(batch_data):
     inputs = [batch_data[:, i:i+1] for i in range(5)]
@@ -716,19 +840,7 @@ def prepare_inputs_outputs(batch_data):
     return inputs, outputs
 
 def calculate_ic_losses(model, inputs, outputs, criterion):
-
-    # Ensure inputs is a list or tuple of tensors
-    if not isinstance(inputs, (list, tuple)):
-        raise TypeError("inputs should be a list or tuple of tensors")
-
-    # Check each element in inputs
-    for i, tensor in enumerate(inputs):
-        if not isinstance(tensor, torch.Tensor):
-            raise TypeError(f"inputs[{i}] should be a torch.Tensor but got {type(tensor)}")
-
-    # Concatenate inputs along the specified dimension
     concatenated_inputs = torch.cat(inputs, dim=1)
-
     predictions = model(concatenated_inputs)
     return [criterion(predictions[i], outputs[i].squeeze()) for i in range(6)]
 
@@ -738,8 +850,8 @@ def main():
 
     input_min = [-2.5, -2.5, 1, 30e6, 0]
     input_max = [7.5, 2.5, 100, 70e6, 2 * np.pi]
-    output_min = [-1, -1, -2, 0, 0, 0]
-    output_max = [2, 1, 1, 0.1, 30, 0.01]
+    output_min = [-1, -1, -2, 1e-8, 1, 1e-8]
+    output_max = [2, 1, 1, 0.1, 100, 0.01]
 
     model = PINN(input_min, input_max, output_min, output_max).to(device)
     optimizer = optim.Adam(
@@ -750,7 +862,7 @@ def main():
         weight_decay=1e-4
     )
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=optim_config.decay_steps, gamma=optim_config.decay_rate)
-    writer = SummaryWriter(log_dir='runs/c25_04')
+    writer = SummaryWriter(log_dir='runs/c25_06')
 
     weights = {
         'bc': torch.ones(14, device=device, requires_grad=True),
@@ -780,10 +892,17 @@ def main():
             batch_size_ic = batch_size
             ic_batch = dataset.get_initial_condition_batch(batch_size_ic).to(device)
             ic_inputs, ic_outputs = prepare_inputs_outputs(ic_batch)
-            ic_losses = calculate_ic_losses(model, ic_inputs, ic_outputs, criterion)
+
+            ic_losses = [
+                criterion(torch.log(torch.clamp(model(torch.cat(ic_inputs, dim=1))[i], min=1e-6)),
+                          torch.log(torch.clamp(ic_outputs[i].squeeze(), min=1e-6)))
+                if i > 2 else criterion(model(torch.cat(ic_inputs, dim=1))[i], ic_outputs[i].squeeze())
+                for i in range(6)
+            ]
 
             ic_total_loss = sum(all_normalized_weights['ic'][i]*weights['ic'][i]*ic_losses[i]
                                     for i in range(len(weights['ic'])))
+
 
             cumulative_losses = {
                 'pde': torch.zeros(6),
@@ -820,8 +939,12 @@ def main():
 
                 raw_losses['bc'] = bc_calc_loss(model, boundary_conditions, criterion)
 
-                raw_losses['sparse'] = [criterion(model(torch.cat(inputs, dim=1))[i], outputs[i].squeeze())
-                                 for i in range(6)]
+                raw_losses['sparse'] = [
+                    criterion(torch.log(torch.clamp(model(torch.cat(inputs, dim=1))[i], min=1e-6)),
+                              torch.log(torch.clamp(outputs[i].squeeze(), min=1e-6)))
+                    if i > 2 else criterion(model(torch.cat(inputs, dim=1))[i], outputs[i].squeeze())
+                    for i in range(6)
+                ]
 
                 eps_ = 1.0
                 temporal_weights = {key: torch.exp(-eps_ * cumulative_losses[key])
@@ -833,6 +956,7 @@ def main():
                 cumulative_losses = {key: cumulative_losses[key] + torch.tensor(
                     [loss.item() for loss in temporal_weighted_losses[key]]) for key in ['bc', 'pde', 'sparse']}
                 interval += 1
+
 
             sparse_losses = [weights['sparse'][i] * cumulative_losses['sparse'][i] for i in range(len(weights['sparse']))]
             pde_losses = [weights['pde'][i] * cumulative_losses['pde'][i] for i in range(len(weights['pde']))]

@@ -32,7 +32,7 @@ def preprocess_data(file_paths):
         # Clip extreme values
         k_ref = np.clip(k_ref, 1e-8, 0.1)
         omega_ref = np.clip(omega_ref, 1, 100)
-        c_ref = np.clip(c_ref, 1e-6, 0.001)
+        c_ref = np.clip(c_ref, 1e-8, 0.01)
 
         # Store processed data
         all_data_files.append((coords, u_ref, v_ref, p_ref, k_ref, omega_ref, c_ref, Re, theta))
