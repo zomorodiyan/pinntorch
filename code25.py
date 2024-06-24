@@ -77,7 +77,7 @@ optim_config.weight_decay = 1.0e-4
 
 N_loss_print = 100
 N_save_model = 4900
-N_weight_update = 10
+N_weight_update = 2
 N_plot_fields = 1000
 N_intervals = 10
 
@@ -452,62 +452,17 @@ def pde_residuals(model, x, y, t, Re, theta):
 
 all_ones_weights = {
         'pde': torch.tensor([1.0] * 6, device=device),
-        'bc': torch.tensor([1.0] * 13, device=device),
+        'bc': torch.tensor([1.0] * 14, device=device),
         'ic': torch.tensor([1.0] * 6, device=device),
         'sparse': torch.tensor([1.0] * 6, device=device)
     }
-only_bc_weights = {
-        'pde': torch.tensor([0.0] * 6, device=device),
-        'bc': torch.tensor([1.0] * 14, device=device),
-        'ic': torch.tensor([0.0] * 6, device=device),
-        'sparse': torch.tensor([0.0] * 6, device=device)
-    }
-bc_ic_weights = {
-        'pde': torch.tensor([0.0] * 6, device=device),
-        'bc': torch.tensor([1.0] * 14, device=device),
-        'ic': torch.tensor([1.0] * 6, device=device),
-        'sparse': torch.tensor([0.0] * 6, device=device)
-    }
-bc_ic_normalized_weights = {
-        'pde': torch.tensor([0.0] * 6, device=device),
-        'bc': torch.tensor([3.0**-2, 2.0**-2, 0.1**-2,(30.0)**-2, (3.0*20)**-2, (2.0*20)**-2, (3.0*20)**-2,
-                            (0.1*20)**-2, (30*20)**-2, 2.0**-2, 3.0**-2, 3.0**-2, 2.0**-2, 0.1**-2], device=device),
-        'ic': torch.tensor([3.0**-2, 2.0**-2, 3.0**-2, 0.1**-2, 30.0**-2, 0.01**-2], device=device),
-        'sparse': torch.tensor([0.0] * 6, device=device)
-    }
-bc_normalized_weights = {
-        'pde': torch.tensor([0.0] * 6, device=device),
-        'bc': torch.tensor([3.0**-2, 2.0**-2, 0.1**-2,(30.0)**-2, (3.0*20)**-2, (2.0*20)**-2, (3.0*20)**-2,
-                            (0.1*20)**-2, (30*20)**-2, 2.0**-2, 3.0**-2, 3.0**-2, 2.0**-2, 0.1**-2], device=device),
-        'ic': torch.tensor([0.0] * 6, device=device),
-        'sparse': torch.tensor([0.0] * 6, device=device)
-    }
+
 all_normalized_weights = {
-        'pde': torch.tensor(np.array([3.0**-2, 2.0**-2, 3.0**-2, 0.1**-2,
-                                      30.0**-2, 0.01**-2])*10, device=device),
-        'bc': torch.tensor([3.0**-2, 2.0**-2, 0.1**-2,(30.0)**-2, (3.0*20)**-2, (2.0*20)**-2, (3.0*20)**-2,
+        'pde': torch.tensor(np.array([3.0**-2, 2.0**-2, 3.0**-2, 0.1**-2, 30.0**-2, 0.01**-2])*10, device=device),
+        'bc': torch.tensor([3.0**-2, 2.0**-2, 0.1**-2, (30.0)**-2, (3.0*20)**-2, (2.0*20)**-2, (3.0*20)**-2,
                             (0.1*20)**-2, (30*20)**-2, 2.0**-2, 3.0**-2, 3.0**-2, 2.0**-2, 0.1**-2], device=device),
         'ic': torch.tensor([3.0**-2, 2.0**-2, 3.0**-2, 0.1**-2, 30.0**-2, 0.01**-2], device=device),
         'sparse': torch.tensor([3.0**-2, 2.0**-2, 3.0**-2, 0.1**-2, 30.0**-2, 0.01**-2], device=device)
-    }
-bc_super_ic_norm_weights = {
-        'pde': torch.tensor([0.0] * 6, device=device),
-        'bc': torch.tensor([3.0**-2, 2.0**-2, 0.1**-2,(30.0)**-2, (3.0*20)**-2, (2.0*20)**-2, (3.0*20)**-2,
-                            (0.1*20)**-2, (30*20)**-2, 2.0**-2, 3.0**-2,
-                            3.0**-2, 2.0**-2, 0.1**-2]*100, device=device),
-        'ic': torch.tensor([3.0**-2, 2.0**-2, 3.0**-2, 0.1**-2, 30.0**-2, 0.01**-2], device=device),
-        'sparse': torch.tensor([0.0] * 6, device=device)
-    }
-bc_ic_super_all_norm_weights = {
-        'pde': torch.tensor(np.array([3.0**-2, 2.0**-2, 3.0**-2, 0.1**-2,
-                                      30.0**-2, 0.01**-2])*10, device=device),
-        'bc': torch.tensor([3.0**-2, 2.0**-2, 0.1**-2,(30.0)**-2, (3.0*20)**-2, (2.0*20)**-2, (3.0*20)**-2,
-                            (0.1*20)**-2, (30*20)**-2, 2.0**-2, 3.0**-2,
-                            3.0**-2, 2.0**-2, 0.1**-2]*100, device=device),
-        'ic': torch.tensor([3.0**-2, 2.0**-2, 3.0**-2, 0.1**-2, 30.0**-2,
-                            0.01**-2]*100, device=device),
-        'sparse': torch.tensor([3.0**-2, 2.0**-2, 3.0**-2, 0.1**-2, 30.0**-2,
-                                0.01**-2], device=device),
     }
 
 def update_weights(model, pde_inputs, boundary_conditions, initial_conditions, sparse_data, weights, writer, epoch):
@@ -546,10 +501,20 @@ def update_weights(model, pde_inputs, boundary_conditions, initial_conditions, s
         for residual in pde_residuals(model, *pde_inputs)
     ]
 
+    inputs_sparse, outputs_sparse = prepare_inputs_outputs(sparse_data)
     sparse_losses = [
-        criterion(model(torch.cat(sparse_data[:5], dim=1))[i], sparse_data[i + 5].squeeze())
+        criterion(model(torch.cat(inputs_sparse, dim=1))[i], outputs_sparse[i].squeeze())
         for i in range(6)
     ]
+
+    normalized_ic_losses = [all_normalized_weights['ic'][i]*ic_losses[i]
+                       for i in range(len(all_normalized_weights['ic']))]
+    normalized_sparse_losses = [all_normalized_weights['sparse'][i]*sparse_losses[i]
+                       for i in range(len(all_normalized_weights['sparse']))]
+    normalized_pde_losses = [all_normalized_weights['pde'][i]*pde_losses[i]
+                     for i in range(len(all_normalized_weights['pde']))]
+    normalized_bc_losses = [all_normalized_weights['bc'][i]*bc_losses[i]
+                    for i in range(len(all_normalized_weights['bc']))]
 
     # Calculate gradients
     gradients = {
@@ -583,12 +548,9 @@ def update_weights(model, pde_inputs, boundary_conditions, initial_conditions, s
         weight_update = torch.clamp(weight_update, min=min_weight)
         new_weights[key] = weight_update
 
-    # Log the updated weights
-    formatted_print("Updated weights:", new_weights)
     for key in new_weights:
         for i, w in enumerate(new_weights[key]):
             writer.add_scalar(f'weights/{key}_{i}', w, epoch)
-
     return new_weights
 
 def bc_calc_loss(model, boundary_conditions, criterion):
@@ -613,6 +575,8 @@ def bc_calc_loss(model, boundary_conditions, criterion):
                     bc_losses.append(criterion(k_pred, value.squeeze()))
                 elif variable == 'omega':
                     bc_losses.append(criterion(omega_pred, value.squeeze()))
+                elif variable == 'v_dir':
+                    bc_losses.append(criterion(v_pred, value.squeeze()))
 
             elif condition['type'] == 'Neumann':
                 dir_deriv = condition['dir_deriv']
@@ -663,6 +627,10 @@ class CustomDataset(Dataset):
         start_idx = start_snapshot * self.elements_per_snapshot
         end_idx = end_snapshot * self.elements_per_snapshot
         return self.data[start_idx:end_idx]
+
+    def get_sparse_batch(self, batch_size):
+        indices = torch.randperm(self.total_data_size)[:batch_size]
+        return self.data[indices]
 
 class IntervalDataLoader:
     def __init__(self, dataset, batch_size):
@@ -719,13 +687,13 @@ def log_metrics(writer, tot_epoch, epoch, total_loss, ic_total_loss, bc_total_lo
 
     # Log weights
     for i in range(len(bc_losses)):
-        writer.add_scalar(f'w_bc/{bc_names[i]}', weights['bc'][i], epoch)
+        writer.add_scalar(f'weights/bc/{bc_names[i]}', weights['bc'][i], epoch)
     for i in range(len(ic_losses)):
-        writer.add_scalar(f'w_ic/{ic_names[i]}', weights['ic'][i], epoch)
+        writer.add_scalar(f'weights/ic/{ic_names[i]}', weights['ic'][i], epoch)
     for i in range(len(sparse_losses)):
-        writer.add_scalar(f'w_sparse/{sparse_names[i]}', weights['sparse'][i], epoch)
+        writer.add_scalar(f'weights/sparse/{sparse_names[i]}', weights['sparse'][i], epoch)
     for i in range(len(pde_losses)):
-        writer.add_scalar(f'w_pde/{pde_names[i]}', weights['pde'][i], epoch)
+        writer.add_scalar(f'weights/pde/{pde_names[i]}', weights['pde'][i], epoch)
 
     if epoch % N_plot_fields == 0:
         plot_data = dataset.get_plotting_data(snapshot=1, simulation=1).to(device)
@@ -748,10 +716,6 @@ def prepare_inputs_outputs(batch_data):
     return inputs, outputs
 
 def calculate_ic_losses(model, inputs, outputs, criterion):
-    # Debug prints
-    print(f"Type of inputs: {type(inputs)}")
-    for i, tensor in enumerate(inputs):
-        print(f"Type of inputs[{i}]: {type(tensor)}, shape: {tensor.shape}")
 
     # Ensure inputs is a list or tuple of tensors
     if not isinstance(inputs, (list, tuple)):
@@ -764,8 +728,6 @@ def calculate_ic_losses(model, inputs, outputs, criterion):
 
     # Concatenate inputs along the specified dimension
     concatenated_inputs = torch.cat(inputs, dim=1)
-
-    print(concatenated_inputs.shape)
 
     predictions = model(concatenated_inputs)
     return [criterion(predictions[i], outputs[i].squeeze()) for i in range(6)]
@@ -788,10 +750,10 @@ def main():
         weight_decay=1e-4
     )
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=optim_config.decay_steps, gamma=optim_config.decay_rate)
-    writer = SummaryWriter(log_dir='runs/c24_lr3_10k_gw_tw')
+    writer = SummaryWriter(log_dir='runs/c25_04')
 
     weights = {
-        'bc': torch.ones(13, device=device, requires_grad=True),
+        'bc': torch.ones(14, device=device, requires_grad=True),
         'ic': torch.ones(6, device=device, requires_grad=True),
         'pde': torch.ones(6, device=device, requires_grad=True),
         'sparse': torch.ones(6, device=device, requires_grad=True)
@@ -819,18 +781,20 @@ def main():
             ic_batch = dataset.get_initial_condition_batch(batch_size_ic).to(device)
             ic_inputs, ic_outputs = prepare_inputs_outputs(ic_batch)
             ic_losses = calculate_ic_losses(model, ic_inputs, ic_outputs, criterion)
-            ic_total_loss = sum(weights['ic'][i] * ic_losses[i] for i in range(len(ic_losses)))
+
+            ic_total_loss = sum(all_normalized_weights['ic'][i]*weights['ic'][i]*ic_losses[i]
+                                    for i in range(len(weights['ic'])))
 
             cumulative_losses = {
                 'pde': torch.zeros(6),
                 'sparse': torch.zeros(6),
-                'bc': torch.zeros(13)
+                'bc': torch.zeros(14)
             }
 
             log_temporal_weights = {
                 'pde': torch.zeros(6),
                 'sparse': torch.zeros(6),
-                'bc': torch.zeros(13)
+                'bc': torch.zeros(14)
             }
 
             interval = 0
@@ -847,7 +811,7 @@ def main():
                 raw_losses = {
                     'pde': torch.zeros(6),
                     'sparse': torch.zeros(6),
-                    'bc': torch.zeros(13)
+                    'bc': torch.zeros(14)
                 }
 
 
@@ -868,16 +832,18 @@ def main():
 
                 cumulative_losses = {key: cumulative_losses[key] + torch.tensor(
                     [loss.item() for loss in temporal_weighted_losses[key]]) for key in ['bc', 'pde', 'sparse']}
-                print(interval,end=' ')
                 interval += 1
 
             sparse_losses = [weights['sparse'][i] * cumulative_losses['sparse'][i] for i in range(len(weights['sparse']))]
             pde_losses = [weights['pde'][i] * cumulative_losses['pde'][i] for i in range(len(weights['pde']))]
             bc_losses = [weights['bc'][i] * cumulative_losses['bc'][i] for i in range(len(weights['bc']))]
 
-            sparse_total_loss = sum(sparse_losses)
-            pde_total_loss = sum(pde_losses)
-            bc_total_loss = sum(bc_losses)
+            sparse_total_loss = sum(all_normalized_weights['sparse'][i]*sparse_losses[i]
+                                    for i in range(len(all_normalized_weights['sparse'])))
+            pde_total_loss = sum(all_normalized_weights['pde'][i]*pde_losses[i]
+                                    for i in range(len(all_normalized_weights['pde'])))
+            bc_total_loss = sum(all_normalized_weights['bc'][i]*bc_losses[i]
+                                    for i in range(len(all_normalized_weights['bc'])))
 
             total_loss += ic_total_loss + sparse_total_loss + pde_total_loss + bc_total_loss
 
@@ -887,12 +853,17 @@ def main():
             scheduler.step()
             tot_epoch += 1
 
+
             if epoch % N_weight_update == 0 and epoch != 0:
+                sparse_data = dataset.get_sparse_batch(batch_size).to(device)
                 new_weights = update_weights(model, pde_inputs, boundary_conditions,\
-                  (inputs_0, outputs_0), sparse_data, weights, writer, tot_epoch)
+                  (ic_inputs, ic_outputs), sparse_data, weights, writer, tot_epoch)
+
                 alpha_ = 0.9
                 for key in weights.keys():
                     weights[key] = alpha_ * weights[key] + (1 - alpha_) * new_weights[key]
+                    print(f"weights[{key}]:", [f"{weights[key][i].item():.1f}" for i in range(len(weights[key]))])
+
 
             log_metrics(writer, tot_epoch, epoch, total_loss, ic_total_loss,
                         bc_total_loss, sparse_total_loss, pde_total_loss,
