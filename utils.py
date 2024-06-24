@@ -36,40 +36,40 @@ def check_tensor_stats(tensor, name):
         print(f"{name: <10} mean={tensor.mean().item(): .3e}, std={tensor.std().item(): .3e}, min={tensor.min().item(): .3e}, max={tensor.max().item(): .3e}")
 
 
-def plot_fields(time, model, x, y, t, Re, theta, name = 'new_fig', U_star = None, save_dir="figures"):
+def plot_fields(model, x, y, t, Re, theta, snapshot, simulation, name = 'new_fig', U_star = None, save_dir="figures"):
     with torch.no_grad():
         L_star = 80.0
 
-        u_pred, v_pred, p_pred, k_pred, omega_pred, c_pred = model(\
-          torch.cat([x_pred, y_pred, t_pred, Re_pred, theta_pred], dim=1))
+        u, v, p, k, omega, c = model(\
+          torch.cat([x, y, t, Re, theta], dim=1))
 
         # Convert predictions to numpy arrays for plotting
-        u_pred = u_pred.cpu().numpy()
-        v_pred = v_pred.cpu().numpy()
-        p_pred = p_pred.cpu().numpy()
-        k_pred = k_pred.cpu().numpy()
-        omega_pred = omega_pred.cpu().numpy()
-        c_pred = c_pred.cpu().numpy()
-        x_pred = x_pred.cpu()
-        y_pred = y_pred.cpu()
+        u = u.cpu().numpy()
+        v = v.cpu().numpy()
+        p = p.cpu().numpy()
+        k = k.cpu().numpy()
+        omega = omega.cpu().numpy()
+        c = c.cpu().numpy()
+        x = x.cpu()
+        y = y.cpu()
 
         # dimensionalize the predictions if U_star is provided
         if U_star is not None:
-            u_pred = u_pred * U_star
-            v_pred = v_pred * U_star
-            p_pred = p_pred * U_star**2
-            k_pred = k_pred * U_star**2
-            omega_pred = omega_pred * U_star / L_star
+            u = u * U_star
+            v = v * U_star
+            p = p * U_star**2
+            k = k * U_star**2
+            omega = omega * U_star / L_star
 
         # Triangulation for plotting
-        triang = tri.Triangulation(x_pred.squeeze(), y_pred.squeeze())
+        triang = tri.Triangulation(x.squeeze(), y.squeeze())
 
         # Mask the triangles inside the circle
         center = (0.0, 0.0)
         radius = 40.0 / L_star
 
-        x_tri = x_pred[triang.triangles].mean(axis=1)
-        y_tri = y_pred[triang.triangles].mean(axis=1)
+        x_tri = x[triang.triangles].mean(axis=1)
+        y_tri = y[triang.triangles].mean(axis=1)
 
         dist_from_center = np.sqrt((x_tri - center[0]) ** 2 + (y_tri - center[1]) ** 2)
         mask = dist_from_center < radius
@@ -81,37 +81,37 @@ def plot_fields(time, model, x, y, t, Re, theta, name = 'new_fig', U_star = None
         fig1 = plt.figure(figsize=(18, 12))
 
         plt.subplot(3, 2, 1)
-        plt.tricontourf(triang, u_pred.squeeze(), cmap='jet', levels=100)
+        plt.tricontourf(triang, u.squeeze(), cmap='jet', levels=100)
         plt.colorbar()
         plt.title(f'Predicted $u$ at time {snapshot}s ')
         plt.tight_layout()
 
         plt.subplot(3, 2, 2)
-        plt.tricontourf(triang, v_pred.squeeze(), cmap='jet', levels=100)
+        plt.tricontourf(triang, v.squeeze(), cmap='jet', levels=100)
         plt.colorbar()
         plt.title(f'Predicted $v$ at time {snapshot}s ')
         plt.tight_layout()
 
         plt.subplot(3, 2, 3)
-        plt.tricontourf(triang, p_pred.squeeze(), cmap='jet', levels=100)
+        plt.tricontourf(triang, p.squeeze(), cmap='jet', levels=100)
         plt.colorbar()
         plt.title(f'Predicted $p$ at time {snapshot}s')
         plt.tight_layout()
 
         plt.subplot(3, 2, 4)
-        plt.tricontourf(triang, k_pred.squeeze(), cmap='jet', levels=100)
+        plt.tricontourf(triang, k.squeeze(), cmap='jet', levels=100)
         plt.colorbar()
         plt.title(f'Predicted $k$ at time {snapshot}s')
         plt.tight_layout()
 
         plt.subplot(3, 2, 5)
-        plt.tricontourf(triang, omega_pred.squeeze(), cmap='jet', levels=100)
+        plt.tricontourf(triang, omega.squeeze(), cmap='jet', levels=100)
         plt.colorbar()
         plt.title(f'Predicted $\omega$ at time {snapshot}s')
         plt.tight_layout()
 
         plt.subplot(3, 2, 6)
-        plt.tricontourf(triang, c_pred.squeeze(), cmap='jet', levels=100)
+        plt.tricontourf(triang, c.squeeze(), cmap='jet', levels=100)
         plt.colorbar()
         plt.title(f'Predicted $c$ at time {snapshot}s')
         plt.tight_layout()
