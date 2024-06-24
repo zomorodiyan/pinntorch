@@ -703,13 +703,53 @@ def log_metrics(writer, tot_epoch, epoch, total_loss, ic_total_loss, bc_total_lo
         writer.add_scalar(f'weights/pde/{pde_names[i]}', weights['pde'][i], epoch)
 
     if epoch % N_plot_fields == 0:
-        plot_data = dataset.get_plotting_data(snapshot=1, simulation=1).to(device)
+        snapshot, simulation = 1,1
+        plot_data = dataset.get_plotting_data(snapshot=snapshot, simulation=simulation).to(device)
         plot_inputs, _ = prepare_inputs_outputs(plot_data)
-        time_value = 1.0
-        snapshot = 1
-        simulation = 1
-        fig = plot_fields(model, *plot_inputs, snapshot, simulation, f'code17h_{epoch}')
-        writer.add_figure('Predicted Fields', fig, epoch)
+        x,y,t,Re,theta = plot_inputs
+        u, v, p, k, omega, c = model(torch.cat([x, y, t, Re, theta], dim=1))
+        fig = plot_fields(x,y,u,v,p,k,omega,c, snapshot, simulation, f'c26_emh_t1_epoch{epoch}')
+        writer.add_figure('Predicted Initial Fields', fig, epoch)
+
+        snapshot, simulation = 2,11
+        plot_data = dataset.get_plotting_data(snapshot=snapshot, simulation=simulation).to(device)
+        plot_inputs, _ = prepare_inputs_outputs(plot_data)
+        x,y,t,Re,theta = plot_inputs
+        u, v, p, k, omega, c = model(torch.cat([x, y, t, Re, theta], dim=1))
+        fig = plot_fields(x,y,u,v,p,k,omega,c, snapshot, simulation, f'c26_emh_t11_epoch{epoch}')
+        writer.add_figure('Predicted t = 10s Fields', fig, epoch)
+
+        snapshot, simulation = 3,21
+        plot_data = dataset.get_plotting_data(snapshot=snapshot, simulation=simulation).to(device)
+        plot_inputs, _ = prepare_inputs_outputs(plot_data)
+        x,y,t,Re,theta = plot_inputs
+        u, v, p, k, omega, c = model(torch.cat([x, y, t, Re, theta], dim=1))
+        fig = plot_fields(x,y,u,v,p,k,omega,c, snapshot, simulation, f'c26_emh_t21_epoch{epoch}')
+        writer.add_figure('Predicted t = 20s Fields', fig, epoch)
+
+        snapshot, simulation = 4,31
+        plot_data = dataset.get_plotting_data(snapshot=snapshot, simulation=simulation).to(device)
+        plot_inputs, _ = prepare_inputs_outputs(plot_data)
+        x,y,t,Re,theta = plot_inputs
+        u, v, p, k, omega, c = model(torch.cat([x, y, t, Re, theta], dim=1))
+        fig = plot_fields(x,y,u,v,p,k,omega,c, snapshot, simulation, f'c26_emh_t31_epoch{epoch}')
+        writer.add_figure('Predicted t = 30s Fields', fig, epoch)
+
+        snapshot, simulation = 5,41
+        plot_data = dataset.get_plotting_data(snapshot=snapshot, simulation=simulation).to(device)
+        plot_inputs, _ = prepare_inputs_outputs(plot_data)
+        x,y,t,Re,theta = plot_inputs
+        u, v, p, k, omega, c = model(torch.cat([x, y, t, Re, theta], dim=1))
+        fig = plot_fields(x,y,u,v,p,k,omega,c, snapshot, simulation, f'c26_emh_t31_epoch{epoch}')
+        writer.add_figure('Predicted t = 40s Fields', fig, epoch)
+
+        snapshot, simulation = 1,100
+        plot_data = dataset.get_plotting_data(snapshot=snapshot, simulation=simulation).to(device)
+        plot_inputs, _ = prepare_inputs_outputs(plot_data)
+        x,y,t,Re,theta = plot_inputs
+        u, v, p, k, omega, c = model(torch.cat([x, y, t, Re, theta], dim=1))
+        fig = plot_fields(x,y,u,v,p,k,omega,c, snapshot, simulation, f'c26_emh_t31_epoch{epoch}')
+        writer.add_figure('Predicted t= 100s Fields', fig, epoch)
 
     if epoch % N_loss_print == 0:
         print(f'Epoch {epoch}, Loss: {total_loss.item()}')
@@ -717,12 +757,10 @@ def log_metrics(writer, tot_epoch, epoch, total_loss, ic_total_loss, bc_total_lo
     if epoch % N_save_model == 0:
         save_model(model, 'c19_model.pth')
 
-def plot_fields(model, x, y, t, Re, theta, snapshot, simulation, name = 'new_fig', U_star = None, save_dir="figures"):
+def plot_fields(x, y, u, v, p, k, omega, c, snapshot,
+                simulation,  name = 'new_fig', U_star = None, save_dir="figures"):
     with torch.no_grad():
         L_star = 80.0
-
-        u, v, p, k, omega, c = model(\
-          torch.cat([x, y, t, Re, theta], dim=1))
 
         # Convert predictions to numpy arrays for plotting
         u = u.cpu().numpy()
@@ -767,32 +805,36 @@ def plot_fields(model, x, y, t, Re, theta, snapshot, simulation, name = 'new_fig
         plt.title(f'Predicted $u$ at time {snapshot}s ')
         plt.tight_layout()
 
-        plt.subplot(3, 2, 2)
+        plt.subplot(3, 2, 3)
         plt.tricontourf(triang, v.squeeze(), cmap='jet', levels=100)
         plt.colorbar()
         plt.title(f'Predicted $v$ at time {snapshot}s ')
         plt.tight_layout()
 
-        plt.subplot(3, 2, 3)
+        plt.subplot(3, 2, 5)
         plt.tricontourf(triang, p.squeeze(), cmap='jet', levels=100)
         plt.colorbar()
         plt.title(f'Predicted $p$ at time {snapshot}s')
         plt.tight_layout()
 
-        plt.subplot(3, 2, 4)
-        plt.tricontourf(triang, k.squeeze(), cmap='jet', levels=100)
+
+        k_cliped = np.clip(k.squeeze(), 1e-8, 100)
+        plt.subplot(3, 2, 2)
+        plt.tricontourf(triang, np.log10(k_cliped), cmap='jet', levels=100)
         plt.colorbar()
         plt.title(f'Predicted $k$ at time {snapshot}s')
         plt.tight_layout()
 
-        plt.subplot(3, 2, 5)
-        plt.tricontourf(triang, omega.squeeze(), cmap='jet', levels=100)
+        omega_cliped = np.clip(omega.squeeze(), 1e-8, 100)
+        plt.subplot(3, 2, 4)
+        plt.tricontourf(triang, np.log10(omega_cliped), cmap='jet', levels=100)
         plt.colorbar()
         plt.title(f'Predicted $\omega$ at time {snapshot}s')
         plt.tight_layout()
 
+        c_cliped = np.clip(c.squeeze(), 1e-8, 0.001)
         plt.subplot(3, 2, 6)
-        plt.tricontourf(triang, c.squeeze(), cmap='jet', levels=100)
+        plt.tricontourf(triang, np.log10(c_cliped), cmap='jet', levels=100)
         plt.colorbar()
         plt.title(f'Predicted $c$ at time {snapshot}s')
         plt.tight_layout()
@@ -862,7 +904,7 @@ def main():
         weight_decay=1e-4
     )
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=optim_config.decay_steps, gamma=optim_config.decay_rate)
-    writer = SummaryWriter(log_dir='runs/c25_06')
+    writer = SummaryWriter(log_dir='runs/c25_08')
 
     weights = {
         'bc': torch.ones(14, device=device, requires_grad=True),
@@ -872,7 +914,7 @@ def main():
     }
 
     run_schedule = [
-        (10000, all_ones_weights),
+        (50000, all_ones_weights),
     ]
 
     data_array = np.load("data/preprocessed_data.npy")
@@ -889,7 +931,7 @@ def main():
             total_loss = 0
 
             batch_size = 256
-            batch_size_ic = batch_size
+            batch_size_ic = 4*batch_size
             ic_batch = dataset.get_initial_condition_batch(batch_size_ic).to(device)
             ic_inputs, ic_outputs = prepare_inputs_outputs(ic_batch)
 
@@ -923,7 +965,7 @@ def main():
                 x_sparse, y_sparse, t_sparse, Re_sparse, theta_sparse = inputs
                 u_sparse, v_sparse, p_sparse, k_sparse, omega_sparse, c_sparse = outputs
 
-                boundary_conditions = generate_boundary_conditions(interval, batch_size)
+                boundary_conditions = generate_boundary_conditions(interval, batch_size//4)
                 pde_inputs = (x_sparse, y_sparse, t_sparse, Re_sparse, theta_sparse)
 
 
