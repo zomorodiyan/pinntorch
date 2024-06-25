@@ -53,16 +53,16 @@ def preprocess_data(file_paths):
     return np.array(all_data)
 
 # Preprocess data
-'''
 file_paths = ["data/unsteady_emh.npy", "data/unsteady_nemh.npy",
               "data/unsteady_nwmh.npy", "data/unsteady_swmh.npy",
               "data/unsteady_smh.npy"]
 '''
 file_paths = ["data/unsteady_emh.npy"]
+'''
 data_array = preprocess_data(file_paths)
 
 # Save preprocessed data
-np.save("data/preprocessed_emh_cliped.npy", data_array)
+np.save("data/preprocessed_cliped.npy", data_array)
 
 '''
 def preprocess_data(file_paths):

@@ -76,7 +76,7 @@ optim_config.weight_decay = 1.0e-4
 N_loss_print = 100
 N_save_model = 5000
 N_weight_update = 10
-N_plot_fields = 100
+N_plot_fields = 1000
 N_intervals = 10
 
 def save_model(model, path):
@@ -494,14 +494,6 @@ def update_weights(model, pde_inputs, boundary_conditions, initial_conditions, s
 
     # Calculate loss components
     ic_losses = [ criterion(model(torch.cat(inputs_0, dim=1))[i], outputs_0[i].squeeze()) for i in range(6) ]
-    '''
-    ic_losses = [
-        criterion(torch.log(torch.clamp(model(torch.cat(inputs_0, dim=1))[i], min=1e-6)),
-                  torch.log(torch.clamp(outputs_0[i].squeeze(), min=1e-6)))
-        if i > 5 else criterion(model(torch.cat(inputs_0, dim=1))[i], outputs_0[i].squeeze())
-        for i in range(6)
-    ]
-
 
     bc_losses = bc_calc_loss(model, boundary_conditions, criterion)
     pde_losses = [
@@ -513,14 +505,6 @@ def update_weights(model, pde_inputs, boundary_conditions, initial_conditions, s
 
     sparse_losses = [criterion(model(torch.cat(inputs_sparse, dim=1))[i], outputs_sparse[i].squeeze()) for i in range(6)]
 
-    '''
-    sparse_losses = [
-        criterion(torch.log(torch.clamp(model(torch.cat(inputs_sparse, dim=1))[i], min=1e-6)),
-                  torch.log(torch.clamp(outputs_sparse[i].squeeze(), min=1e-6)))\
-        if i > 5 else criterion(model(torch.cat(inputs_sparse, dim=1))[i], outputs_sparse[i].squeeze())
-        for i in range(6)
-    ]
-    '''
     normalized_ic_losses = [all_normalized_weights['ic'][i]*ic_losses[i]
                        for i in range(len(all_normalized_weights['ic']))]
     normalized_sparse_losses = [all_normalized_weights['sparse'][i]*sparse_losses[i]
@@ -771,7 +755,7 @@ def log_metrics(writer, tot_epoch, epoch, total_loss, ic_total_loss, bc_total_lo
         print(f'Epoch {epoch}, Loss: {total_loss.item()}')
 
     if epoch % N_save_model == 0:
-        save_model(model, 'c26_cliped.pth')
+        save_model(model, 'c26_20K_u9.pth')
 
 def plot_fields(x, y, u, v, p, k, omega, c, snapshot,
                 simulation,  name = 'new_fig', U_star = None, save_dir="figures"):
@@ -920,7 +904,7 @@ def main():
         weight_decay=1e-4
     )
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=optim_config.decay_steps, gamma=optim_config.decay_rate)
-    writer = SummaryWriter(log_dir='runs/c26_01')
+    writer = SummaryWriter(log_dir='runs/c26_02_jun25')
 
     weights = {
         'bc': torch.ones(14, device=device, requires_grad=True),
@@ -950,16 +934,7 @@ def main():
             batch_size_ic = batch_size
             ic_batch = dataset.get_initial_condition_batch(batch_size_ic).to(device)
             ic_inputs, ic_outputs = prepare_inputs_outputs(ic_batch)
-
-            ic_losses = [ criterion(model(torch.cat(ic_inputs, dim=1))[i], ic_outputs[i].squeeze()) for i in range(6) ]
-            '''
-            ic_losses = [
-                criterion(torch.log(torch.clamp(model(torch.cat(ic_inputs, dim=1))[i], min=1e-6)),
-                          torch.log(torch.clamp(ic_outputs[i].squeeze(), min=1e-6)))
-                if i > 5 else criterion(model(torch.cat(ic_inputs, dim=1))[i], ic_outputs[i].squeeze())
-                for i in range(6)
-            ]
-            '''
+            ic_losses = [criterion(model(torch.cat(ic_inputs, dim=1))[i], ic_outputs[i].squeeze()) for i in range(6)]
 
             ic_total_loss = sum(all_normalized_weights['ic'][i]*weights['ic'][i]*ic_losses[i]
                                     for i in range(len(weights['ic'])))
@@ -1002,14 +977,6 @@ def main():
 
 
                 raw_losses['sparse'] = [criterion(model(torch.cat(inputs, dim=1))[i], outputs[i].squeeze()) for i in range(6) ]
-                '''
-                raw_losses['sparse'] = [
-                    criterion(torch.log(torch.clamp(model(torch.cat(inputs, dim=1))[i], min=1e-6)),
-                              torch.log(torch.clamp(outputs[i].squeeze(), min=1e-6)))
-                    if i > 5 else criterion(model(torch.cat(inputs, dim=1))[i], outputs[i].squeeze())
-                    for i in range(6)
-                ]
-                '''
 
                 eps_ = 1.0
                 temporal_weights = {key: torch.exp(-eps_ * cumulative_losses[key])
