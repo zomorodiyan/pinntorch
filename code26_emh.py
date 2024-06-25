@@ -619,8 +619,7 @@ class CustomDataset(Dataset):
         self.snapshots_per_interval = self.total_snapshots // self.num_intervals
         self.total_data_size = len(data_array)
         self.elements_per_snapshot = self.total_data_size // self.total_snapshots
-        self.elements_per_simulation = self.elements_per_snapshot // self.num_simulations
-        self.total_data_size = len(data_array)
+        self.elements_per_simulation = self.total_data_size // self.total_snapshots
 
     def __len__(self):
         return self.total_data_size
@@ -728,7 +727,7 @@ def log_metrics(writer, tot_epoch, epoch, total_loss, ic_total_loss, bc_total_lo
         fig = plot_fields(x,y,u,v,p,k,omega,c, snapshot, simulation, f'c26_emh_t1_epoch{epoch}')
         writer.add_figure('Predicted t = 2s Fields', fig, epoch)
 
-        snapshot, simulation = 20,1
+        snapshot, simulation = 4,1
         plot_data = dataset.get_plotting_data(snapshot=snapshot, simulation=simulation).to(device)
         plot_inputs, _ = prepare_inputs_outputs(plot_data)
         x,y,t,Re,theta = plot_inputs
@@ -736,7 +735,7 @@ def log_metrics(writer, tot_epoch, epoch, total_loss, ic_total_loss, bc_total_lo
         fig = plot_fields(x,y,u,v,p,k,omega,c, snapshot, simulation, f'c26_emh_t11_epoch{epoch}')
         writer.add_figure('Predicted t = 10s Fields', fig, epoch)
 
-        snapshot, simulation = 30,1
+        snapshot, simulation = 10,1
         plot_data = dataset.get_plotting_data(snapshot=snapshot, simulation=simulation).to(device)
         plot_inputs, _ = prepare_inputs_outputs(plot_data)
         x,y,t,Re,theta = plot_inputs
@@ -744,7 +743,7 @@ def log_metrics(writer, tot_epoch, epoch, total_loss, ic_total_loss, bc_total_lo
         fig = plot_fields(x,y,u,v,p,k,omega,c, snapshot, simulation, f'c26_emh_t21_epoch{epoch}')
         writer.add_figure('Predicted t = 20s Fields', fig, epoch)
 
-        snapshot, simulation = 40,1
+        snapshot, simulation = 15,1
         plot_data = dataset.get_plotting_data(snapshot=snapshot, simulation=simulation).to(device)
         plot_inputs, _ = prepare_inputs_outputs(plot_data)
         x,y,t,Re,theta = plot_inputs
@@ -752,7 +751,7 @@ def log_metrics(writer, tot_epoch, epoch, total_loss, ic_total_loss, bc_total_lo
         fig = plot_fields(x,y,u,v,p,k,omega,c, snapshot, simulation, f'c26_emh_t31_epoch{epoch}')
         writer.add_figure('Predicted t = 30s Fields', fig, epoch)
 
-        snapshot, simulation = 50,1
+        snapshot, simulation = 25,1
         plot_data = dataset.get_plotting_data(snapshot=snapshot, simulation=simulation).to(device)
         plot_inputs, _ = prepare_inputs_outputs(plot_data)
         x,y,t,Re,theta = plot_inputs
@@ -772,7 +771,7 @@ def log_metrics(writer, tot_epoch, epoch, total_loss, ic_total_loss, bc_total_lo
         print(f'Epoch {epoch}, Loss: {total_loss.item()}')
 
     if epoch % N_save_model == 0:
-        save_model(model, 'c19_model.pth')
+        save_model(model, 'c26_cliped.pth')
 
 def plot_fields(x, y, u, v, p, k, omega, c, snapshot,
                 simulation,  name = 'new_fig', U_star = None, save_dir="figures"):
@@ -835,7 +834,6 @@ def plot_fields(x, y, u, v, p, k, omega, c, snapshot,
         plt.tight_layout()
 
 
-        #k_plot = np.clip(k.squeeze(), 1e-20, 100)
         k_plot = k.squeeze()
         plt.subplot(3, 2, 2)
         plt.tricontourf(triang, k_plot, cmap='jet', levels=100)
@@ -843,7 +841,6 @@ def plot_fields(x, y, u, v, p, k, omega, c, snapshot,
         plt.title(f'Predicted $k$ at time {snapshot}s')
         plt.tight_layout()
 
-        #omega_cliped = np.clip(omega.squeeze(), 1e-20, 100)
         omega_plot = omega.squeeze()
         plt.subplot(3, 2, 4)
         plt.tricontourf(triang, omega_plot, cmap='jet', levels=100)
@@ -851,7 +848,6 @@ def plot_fields(x, y, u, v, p, k, omega, c, snapshot,
         plt.title(f'Predicted $\omega$ at time {snapshot}s')
         plt.tight_layout()
 
-        #c_cliped = np.clip(c.squeeze(), 1e-20, 0.001)
         c_plot = c.squeeze()
         plt.subplot(3, 2, 6)
         plt.tricontourf(triang, c_plot, cmap='jet', levels=100)
@@ -937,9 +933,8 @@ def main():
         (50000, all_ones_weights),
     ]
 
-#   data_array = np.load("data/preprocessed_data.npy")
-    data_array = np.load("data/preprocessed_emh_cliped.npy")
-    dataset = CustomDataset(data_array, num_intervals=10)
+    data_array = np.load("data/preprocessed_cliped.npy")
+    dataset = CustomDataset(data_array)
     data_loader = IntervalDataLoader(dataset, batch_size=256)
 
     tot_epoch = 0
