@@ -31,8 +31,8 @@ def preprocess_data(file_paths):
 
         # Clip extreme values
         k_ref = np.clip(k_ref, 1e-8, 0.1)
-        omega_ref = np.clip(omega_ref, 1, 100)
-        c_ref = np.clip(c_ref, 1e-8, 0.01)
+        omega_ref = np.clip(omega_ref, 1e-8, 0.5) # max should be equal to omega at inlet
+        c_ref = np.clip(c_ref, 1e-8, 0.00001)
 
         # Store processed data
         all_data_files.append((coords, u_ref, v_ref, p_ref, k_ref, omega_ref, c_ref, Re, theta))
@@ -50,17 +50,19 @@ def preprocess_data(file_paths):
             for data in all_data_files:
                 coords, u_ref, v_ref, p_ref, k_ref, omega_ref, c_ref, Re, theta = data
                 all_data.append((coords[p, 0], coords[p, 1], t, Re, theta, u_ref[t, p], v_ref[t, p], p_ref[t, p], k_ref[t, p], omega_ref[t, p], c_ref[t, p]))
-
     return np.array(all_data)
 
 # Preprocess data
+'''
 file_paths = ["data/unsteady_emh.npy", "data/unsteady_nemh.npy",
               "data/unsteady_nwmh.npy", "data/unsteady_swmh.npy",
               "data/unsteady_smh.npy"]
+'''
+file_paths = ["data/unsteady_emh.npy"]
 data_array = preprocess_data(file_paths)
 
 # Save preprocessed data
-np.save("data/preprocessed_data2.npy", data_array)
+np.save("data/preprocessed_emh_cliped.npy", data_array)
 
 '''
 def preprocess_data(file_paths):
@@ -91,8 +93,8 @@ def preprocess_data(file_paths):
 
         # Clip extreme values
         k_ref = np.clip(k_ref, 1e-8, 0.1)
-        omega_ref = np.clip(omega_ref, 1, 100)
-        c_ref = np.clip(c_ref, 1e-6, 0.001)
+        omega_ref = np.clip(omega_ref, 1e-8, 0.5)
+        c_ref = np.clip(c_ref, 1e-8, 5e-5)
 
         # Create a large dataset combining all variables
         num_timesteps, num_points = u_ref.shape
