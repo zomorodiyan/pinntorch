@@ -41,15 +41,22 @@ def preprocess_data(file_paths):
 
     all_data = []
 
-    # Interleave data points from all files
-    num_points = all_data_files[0][0].shape[0]
+    # Iterate over each timestep
     for t in range(num_timesteps):
         if t % 10 == 0:
             print(f't: {t}')
-        for p in range(num_points):
-            for data in all_data_files:
-                coords, u_ref, v_ref, p_ref, k_ref, omega_ref, c_ref, Re, theta = data
-                all_data.append((coords[p, 0], coords[p, 1], t, Re, theta, u_ref[t, p], v_ref[t, p], p_ref[t, p], k_ref[t, p], omega_ref[t, p], c_ref[t, p]))
+
+        # Iterate over each file
+        for data in all_data_files:
+            coords, u_ref, v_ref, p_ref, k_ref, omega_ref, c_ref, Re, theta = data
+            num_points = coords.shape[0]
+
+            # Collect data points for the current file at the current timestep
+            for p in range(num_points):
+                all_data.append((coords[p, 0], coords[p, 1], t, Re, theta,
+                                 u_ref[t, p], v_ref[t, p], p_ref[t, p],
+                                 k_ref[t, p], omega_ref[t, p], c_ref[t, p]))
+
     return np.array(all_data)
 
 # Preprocess data
