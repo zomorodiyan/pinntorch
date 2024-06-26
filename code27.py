@@ -496,7 +496,7 @@ def update_weights(model, pde_inputs, boundary_conditions, initial_conditions, s
         return gradients
 
     # Calculate loss components
-    ic_losses = [ criterion(model(torch.cat(inputs_0, dim=1))[i], outputs_0[i].squeeze()) for i in range(6) ]
+    ic_losses = [criterion(model(torch.cat(inputs_0, dim=1))[i], outputs_0[i].squeeze()) for i in range(6)]
 
     bc_losses = bc_calc_loss(model, boundary_conditions, criterion)
     pde_losses = [
@@ -672,20 +672,21 @@ def log_metrics(writer, tot_epoch, epoch, total_loss, ic_total_loss, bc_total_lo
     writer.add_scalar('LearningRate', lr, tot_epoch)
     writer.add_scalar('_total_loss', total_loss.item(), epoch)
     writer.add_scalar('bc/_total', bc_total_loss.item(), epoch)
+
     for i, bc_loss in enumerate(bc_losses):
-        writer.add_scalar(f'bc/{bc_names[i]}', weights['bc'][i] * bc_loss.item(), epoch)
+        writer.add_scalar(f'bc/{bc_names[i]}', all_normalized_weights['bc'][i] * bc_loss.item(), epoch)
 
     writer.add_scalar('ic/_total', ic_total_loss.item(), epoch)
     for i, ic_loss in enumerate(ic_losses):
-        writer.add_scalar(f'ic/{ic_names[i]}', weights['ic'][i] * ic_loss.item(), epoch)
+        writer.add_scalar(f'ic/{ic_names[i]}', all_normalized_weights['ic'][i] * ic_loss.item(), epoch)
 
     writer.add_scalar('sparse/_total', sparse_total_loss.item(), epoch)
     for i, sparse_loss in enumerate(sparse_losses):
-        writer.add_scalar(f'sparse/{sparse_names[i]}', weights['sparse'][i] * sparse_loss.item(), epoch)
+        writer.add_scalar(f'sparse/{sparse_names[i]}', all_normalized_weights['sparse'][i] * sparse_loss.item(), epoch)
 
     writer.add_scalar('pde/_total', pde_total_loss.item(), epoch)
     for i, pde_loss in enumerate(pde_losses):
-        writer.add_scalar(f'pde/{pde_names[i]}', weights['pde'][i] * pde_loss.item(), epoch)
+        writer.add_scalar(f'pde/{pde_names[i]}', all_normalized_weights['pde'][i] * pde_loss.item(), epoch)
 
     # Log weights
     for i in range(len(bc_losses)):
@@ -712,7 +713,7 @@ def log_metrics(writer, tot_epoch, epoch, total_loss, ic_total_loss, bc_total_lo
         fig, ax = plt.subplots(figsize=(10, 6))
         ax.set_yscale('log')
 
-        eps2 = 0.1
+        eps2 = 0.2
         x_bc = np.array([i for i in range(10)])-eps2
         x_pde = np.array([i for i in range(10)])
         x_sparse = np.array([i for i in range(10)])+eps2
@@ -1087,7 +1088,7 @@ def main():
                 raw_losses['sparse'] = [criterion(model(torch.cat(inputs, dim=1))[i], outputs[i].squeeze()) for i in range(6) ]
 
                 eps_ = 1
-                temporal_weights = {key: torch.clamp(torch.exp(-eps_*all_normalized_weights[key].to(device)*cumulative_losses[key].to(device)), min=1e-6, max=None)
+                temporal_weights = {key: torch.clamp(torch.exp(-eps_*all_normalized_weights[key].to(device)*cumulative_losses[key].to(device)), min=1e-3, max=None)
                     for key in ['bc', 'pde', 'sparse']}
 
                 print(f'--- cumulative losses ----- interval {interval} --')
@@ -1136,7 +1137,8 @@ def main():
             if epoch % N_log_metrics == 0:
                 log_metrics(writer, tot_epoch, epoch, total_loss, ic_total_loss,
                             bc_total_loss, sparse_total_loss, pde_total_loss,
-                            ic_losses, bc_losses, sparse_losses, pde_losses,
+                            ic_losses, cumulative_losses['bc'],
+                            cumulative_losses['sparse'], cumulative_losses['pde'],
                             weights, intervals_temporal_weights, model, dataset, scheduler.get_last_lr()[0])
 
 if __name__ == "__main__":
