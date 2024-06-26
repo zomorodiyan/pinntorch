@@ -73,13 +73,13 @@ optim_config.grad_accum_steps = 0
 optim_config.clip_norm = 1000.0
 optim_config.weight_decay = 1.0e-4
 
-N_loss_print = 1
-N_save_model = 5000
+N_loss_print = 10
+N_save_model = 1000
 N_weight_update = 10
 N_plot_fields = 1000
-N_plot_tweight = 100
+N_plot_tweight = 1000
 N_intervals = 10
-N_log_metrics = 1
+N_log_metrics = 10
 
 def save_model(model, path):
     torch.save(model.state_dict(), path)
@@ -458,15 +458,15 @@ all_ones_weights = {
     }
 
 all_normalized_weights = {
-    'pde': torch.tensor([0.2, 0.1, 0.1, 10.0, 0.01, 1e10], device=device),
+    'pde': torch.tensor([0.2, 0.1, 0.1, 100.0, 0.01, 1e6], device=device),
     # inlet u, v, k, omega (all Dirichlet)
     'bc': torch.tensor([0.2, 1.0, 1.0, 0.01,
                         # symmetry_u,v,p,k,omega (all Neumann),v_Dirichlet
-                        0.2, 0.2, 0.2, 100, 0.01, 0.2,
+                        0.2, 0.2, 0.2, 10, 0.01, 0.2,
                         # out_p  wall_u,v,k (all Dirichlet)
                         0.1, 0.2, 0.1, 10.0], device=device),
-    'ic': torch.tensor([0.2, 0.2, 0.2, 1000, 0.2, 1e10], device=device),
-    'sparse': torch.tensor([0.2, 0.2, 0.2, 1000, 0.2, 1e10], device=device)
+    'ic': torch.tensor([0.2, 0.2, 0.2, 100, 0.2, 1e6], device=device),
+    'sparse': torch.tensor([0.2, 0.2, 0.2, 100, 0.2, 1e6], device=device)
 }
 
 def update_weights(model, pde_inputs, boundary_conditions, initial_conditions, sparse_data, weights, writer, epoch):
@@ -719,9 +719,9 @@ def log_metrics(writer, tot_epoch, epoch, total_loss, ic_total_loss, bc_total_lo
         x_sparse = np.array([i for i in range(10)])+eps2
         # Plot all the values with different markers
         for i, obj in enumerate(temporal_weights):
-            ax.scatter([x_bc[i]]*len(obj['bc']), obj['bc'].cpu(), color='green', marker='.', label='bc' if i == 0 else "")
-            ax.scatter([x_pde[i]]*len(obj['pde']), obj['pde'].cpu(), color='blue', marker='.', label='pde' if i == 0 else "")
-            ax.scatter([x_sparse[i]]*len(obj['sparse']), obj['sparse'].cpu(), color='red', marker='.', label='sparse' if i == 0 else "")
+            ax.scatter([x_bc[i]]*len(obj['bc']), obj['bc'].cpu(), color='green', marker='^', label='bc' if i == 0 else "")
+            ax.scatter([x_pde[i]]*len(obj['pde']), obj['pde'].cpu(), color='blue', marker='o', label='pde' if i == 0 else "")
+            ax.scatter([x_sparse[i]]*len(obj['sparse']), obj['sparse'].cpu(), color='red', marker='D', label='sparse' if i == 0 else "")
 
         # Add titles and labels
         ax.set_title('Temporal Weights')
@@ -1018,7 +1018,7 @@ def main():
         weight_decay=1e-4
     )
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=optim_config.decay_steps, gamma=optim_config.decay_rate)
-    writer = SummaryWriter(log_dir='runs_/c27_Jun26_01')
+    writer = SummaryWriter(log_dir='runs/c27_Jun26_02')
 
     weights = {
         'bc': torch.ones(14, device=device, requires_grad=True),
@@ -1028,7 +1028,7 @@ def main():
     }
 
     run_schedule = [
-        (50000, all_ones_weights),
+        (5000, all_ones_weights),
     ]
 
     data_array = np.load("data/preprocessed_clipped.npy")
@@ -1091,11 +1091,6 @@ def main():
                 eps_ = 1
                 temporal_weights = {key: torch.clamp(torch.exp(-eps_*all_normalized_weights[key].to(device)*cumulative_losses[key].to(device)), min=1e-2, max=None)
                     for key in ['bc', 'pde', 'sparse']}
-
-                print(f'--- cumulative losses ----- interval {interval} --')
-                print(all_normalized_weights['pde'].to(device)*cumulative_losses['pde'].to(device))
-                print(f'--- temporal weights ------ interval {interval} --')
-                print(temporal_weights['pde'])
 
                 intervals_temporal_weights.append(temporal_weights)
 
