@@ -465,8 +465,8 @@ all_normalized_weights = {
                         0.2, 0.2, 0.2, 0.2, 0.2, 0.2,
                         # out_p  wall_u,v,k (all Dirichlet)
                         0.1, 0.2, 0.1, 0.1], device=device),
-    'ic': torch.tensor([0.2, 0.2, 0.2, 0.2, 0.2, 1e5], device=device),
-    'sparse': torch.tensor([0.2, 0.2, 0.2, 0.2, 0.2, 1e5], device=device)
+    'ic': torch.tensor([0.2, 0.2, 0.2, 0.2, 0.2, 1e9], device=device),
+    'sparse': torch.tensor([0.2, 0.2, 0.2, 0.2, 0.2, 1e9], device=device)
 }
 
 def update_weights(model, pde_inputs, boundary_conditions, initial_conditions, sparse_data, weights, writer, epoch):
@@ -712,18 +712,21 @@ def log_metrics(writer, tot_epoch, epoch, total_loss, ic_total_loss, bc_total_lo
         fig, ax = plt.subplots(figsize=(10, 6))
         ax.set_yscale('log')
 
-        x = [i for i in range(10)]
+        eps2 = 0.1
+        x_bc = np.array([i for i in range(10)])-eps2
+        x_pde = np.array([i for i in range(10)])
+        x_sparse = np.array([i for i in range(10)])+eps2
         # Plot all the values with different markers
         for i, obj in enumerate(temporal_weights):
-            ax.scatter([x[i]]*len(obj['bc']), obj['bc'].cpu(), color='green', marker='.', label='bc' if i == 0 else "")
-            ax.scatter([x[i]]*len(obj['pde']), obj['pde'].cpu(), color='blue', marker='.', label='pde' if i == 0 else "")
-            ax.scatter([x[i]]*len(obj['sparse']), obj['sparse'].cpu(), color='red', marker='.', label='sparse' if i == 0 else "")
+            ax.scatter([x_bc[i]]*len(obj['bc']), obj['bc'].cpu(), color='green', marker='.', label='bc' if i == 0 else "")
+            ax.scatter([x_pde[i]]*len(obj['pde']), obj['pde'].cpu(), color='blue', marker='.', label='pde' if i == 0 else "")
+            ax.scatter([x_sparse[i]]*len(obj['sparse']), obj['sparse'].cpu(), color='red', marker='.', label='sparse' if i == 0 else "")
 
         # Add titles and labels
         ax.set_title('Temporal Weights')
         ax.set_xlabel('Intervals')
         ax.set_ylabel('Temporal Weights (log scale)')
-        ax.set_xticks(x)  # Ensure all integers from 1 to 10 are included on the x-axis
+        ax.set_xticks(x_pde)  # Ensure all integers from 1 to 10 are included on the x-axis
         ax.legend()
 
         writer.add_figure('t_weights_epoch{epoch}', fig, epoch)
@@ -1084,12 +1087,11 @@ def main():
                 raw_losses['sparse'] = [criterion(model(torch.cat(inputs, dim=1))[i], outputs[i].squeeze()) for i in range(6) ]
 
                 eps_ = 1
-                temporal_weights = {key: torch.exp(
-                  -eps_ * all_normalized_weights[key].to(device)*cumulative_losses[key].to(device))
+                temporal_weights = {key: torch.clamp(torch.exp(-eps_*all_normalized_weights[key].to(device)*cumulative_losses[key].to(device)), min=1e-6, max=None)
                     for key in ['bc', 'pde', 'sparse']}
 
                 print(f'--- cumulative losses ----- interval {interval} --')
-                print(cumulative_losses['pde'])
+                print(all_normalized_weights['pde'].to(device)*cumulative_losses['pde'].to(device))
                 print(f'--- temporal weights ------ interval {interval} --')
                 print(temporal_weights['pde'])
 
