@@ -77,9 +77,9 @@ N_loss_print = 1
 N_save_model = 5000
 N_weight_update = 10
 N_plot_fields = 1000
-N_plot_tweight = 1000
+N_plot_tweight = 100
 N_intervals = 10
-N_log_metrics = 10
+N_log_metrics = 1
 
 def save_model(model, path):
     torch.save(model.state_dict(), path)
@@ -87,7 +87,7 @@ def save_model(model, path):
 def generate_boundary_conditions(interval, num_samples):
     Re_medium = 1.225 * 9.0 * 80.0 / 1.7894e-5
     U_in = 1.0 # N_star ≡ U_in so the non-dim version is 1.0
-    k_in_value = 3 / 2 * (0.05 * U_in) ** 2
+    k_in_value = 1.0#3 / 2 * (0.05 * U_in) ** 2
     omega_in_value = 25 # actual omega_in is higher but I have cliped omega > 25
 
     t_low, t_high = interval * (100 // N_intervals), (interval + 1) * (100 // N_intervals)
@@ -458,15 +458,15 @@ all_ones_weights = {
     }
 
 all_normalized_weights = {
-    'pde': torch.tensor([0.2, 0.1, 0.1, 1.0, 0.01, 1e5], device=device),
+    'pde': torch.tensor([0.2, 0.1, 0.1, 10.0, 0.01, 1e10], device=device),
     # inlet u, v, k, omega (all Dirichlet)
-    'bc': torch.tensor([0.2, 0.1, 0.1, 0.1,
+    'bc': torch.tensor([0.2, 1.0, 1.0, 0.01,
                         # symmetry_u,v,p,k,omega (all Neumann),v_Dirichlet
-                        0.2, 0.2, 0.2, 0.2, 0.2, 0.2,
+                        0.2, 0.2, 0.2, 100, 0.01, 0.2,
                         # out_p  wall_u,v,k (all Dirichlet)
-                        0.1, 0.2, 0.1, 0.1], device=device),
-    'ic': torch.tensor([0.2, 0.2, 0.2, 0.2, 0.2, 1e9], device=device),
-    'sparse': torch.tensor([0.2, 0.2, 0.2, 0.2, 0.2, 1e9], device=device)
+                        0.1, 0.2, 0.1, 10.0], device=device),
+    'ic': torch.tensor([0.2, 0.2, 0.2, 1000, 0.2, 1e10], device=device),
+    'sparse': torch.tensor([0.2, 0.2, 0.2, 1000, 0.2, 1e10], device=device)
 }
 
 def update_weights(model, pde_inputs, boundary_conditions, initial_conditions, sparse_data, weights, writer, epoch):
@@ -1001,7 +1001,8 @@ def calculate_ic_losses(model, inputs, outputs, criterion):
 
 def main():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    criterion = nn.MSELoss()
+    #criterion = nn.MSELoss()
+    criterion = nn.L1Loss()
 
     input_min = [-2.5, -2.5, 1, 30e6, 0]
     input_max = [7.5, 2.5, 100, 70e6, 2 * np.pi]
@@ -1017,7 +1018,7 @@ def main():
         weight_decay=1e-4
     )
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=optim_config.decay_steps, gamma=optim_config.decay_rate)
-    writer = SummaryWriter(log_dir='runs/c27_Jun25_01')
+    writer = SummaryWriter(log_dir='runs_/c27_Jun26_01')
 
     weights = {
         'bc': torch.ones(14, device=device, requires_grad=True),
@@ -1088,7 +1089,7 @@ def main():
                 raw_losses['sparse'] = [criterion(model(torch.cat(inputs, dim=1))[i], outputs[i].squeeze()) for i in range(6) ]
 
                 eps_ = 1
-                temporal_weights = {key: torch.clamp(torch.exp(-eps_*all_normalized_weights[key].to(device)*cumulative_losses[key].to(device)), min=1e-3, max=None)
+                temporal_weights = {key: torch.clamp(torch.exp(-eps_*all_normalized_weights[key].to(device)*cumulative_losses[key].to(device)), min=1e-2, max=None)
                     for key in ['bc', 'pde', 'sparse']}
 
                 print(f'--- cumulative losses ----- interval {interval} --')
