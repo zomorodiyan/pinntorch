@@ -458,15 +458,15 @@ all_ones_weights = {
     }
 
 all_normalized_weights = {
-    'pde': torch.tensor([0.2, 0.1, 0.1, 1.0, 0.01, 1000.0], device=device),
+    'pde': torch.tensor([0.2, 0.1, 0.1, 1.0, 0.01, 1e5], device=device),
     # inlet u, v, k, omega (all Dirichlet)
     'bc': torch.tensor([0.2, 0.1, 0.1, 0.1,
                         # symmetry_u,v,p,k,omega (all Neumann),v_Dirichlet
                         0.2, 0.2, 0.2, 0.2, 0.2, 0.2,
                         # out_p  wall_u,v,k (all Dirichlet)
                         0.1, 0.2, 0.1, 0.1], device=device),
-    'ic': torch.tensor([0.2, 0.2, 0.2, 0.2, 0.2, 1000.0], device=device),
-    'sparse': torch.tensor([0.2, 0.2, 0.2, 0.2, 0.2, 1000.0], device=device)
+    'ic': torch.tensor([0.2, 0.2, 0.2, 0.2, 0.2, 1e5], device=device),
+    'sparse': torch.tensor([0.2, 0.2, 0.2, 0.2, 0.2, 1e5], device=device)
 }
 
 def update_weights(model, pde_inputs, boundary_conditions, initial_conditions, sparse_data, weights, writer, epoch):
@@ -482,7 +482,8 @@ def update_weights(model, pde_inputs, boundary_conditions, initial_conditions, s
 
     min_weight = 1.0
 
-    criterion = nn.MSELoss()
+#   criterion = nn.MSELoss()
+    criterion = nn.L1Loss()
 
     # Calculate gradients for each loss component type
     def calculate_gradients(loss_components):
@@ -529,12 +530,12 @@ def update_weights(model, pde_inputs, boundary_conditions, initial_conditions, s
     new_weights = {}
 
     # Update weights based on gradients, clamping if necessary
-    eps_=1e-6
+    eps_1=1e-6
     for key in weights.keys():
         weight_update = []
         for i, (grad, weight) in enumerate(zip(gradients[key], weights[key])):
             if weight != 0:
-                updated_weight = total_norm / max(grad, eps_)
+                updated_weight = total_norm / max(grad, eps_1)
                 weight_update.append(updated_weight)
             else:
                 weight_update.append(weight.item())
@@ -714,9 +715,9 @@ def log_metrics(writer, tot_epoch, epoch, total_loss, ic_total_loss, bc_total_lo
         x = [i for i in range(10)]
         # Plot all the values with different markers
         for i, obj in enumerate(temporal_weights):
-            ax.scatter([x[i]]*len(obj['bc']), obj['bc'], color='green', marker='.', label='bc' if i == 0 else "")
-            ax.scatter([x[i]]*len(obj['pde']), obj['pde'], color='blue', marker='.', label='pde' if i == 0 else "")
-            ax.scatter([x[i]]*len(obj['sparse']), obj['sparse'], color='red', marker='.', label='sparse' if i == 0 else "")
+            ax.scatter([x[i]]*len(obj['bc']), obj['bc'].cpu(), color='green', marker='.', label='bc' if i == 0 else "")
+            ax.scatter([x[i]]*len(obj['pde']), obj['pde'].cpu(), color='blue', marker='.', label='pde' if i == 0 else "")
+            ax.scatter([x[i]]*len(obj['sparse']), obj['sparse'].cpu(), color='red', marker='.', label='sparse' if i == 0 else "")
 
         # Add titles and labels
         ax.set_title('Temporal Weights')
@@ -1082,9 +1083,10 @@ def main():
                 raw_losses['bc'] = bc_calc_loss(model, boundary_conditions, criterion)
                 raw_losses['sparse'] = [criterion(model(torch.cat(inputs, dim=1))[i], outputs[i].squeeze()) for i in range(6) ]
 
-                eps_ = 1e-1
-                temporal_weights = {key: torch.exp(-eps_ * cumulative_losses[key])
-                  for key in ['bc', 'pde', 'sparse']}
+                eps_ = 1
+                temporal_weights = {key: torch.exp(
+                  -eps_ * all_normalized_weights[key].to(device)*cumulative_losses[key].to(device))
+                    for key in ['bc', 'pde', 'sparse']}
 
                 print(f'--- cumulative losses ----- interval {interval} --')
                 print(cumulative_losses['pde'])
