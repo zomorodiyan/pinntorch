@@ -88,7 +88,7 @@ def save_model(model, path):
 
 def generate_boundary_conditions(interval, num_samples):
     Re_medium = 1.225 * 9.0 * 80.0 / 1.7894e-5
-    U_in = 1.0 # N_star ≡ U_in so the non-dim version is 1.0
+    U_in = 1.0 # U_star ≡ U_in so the non-dim version is 1.0
     k_in_value = 1.0#3 / 2 * (0.05 * U_in) ** 2
     omega_in_value = 25 # actual omega_in is higher but I have cliped omega > 25
 
@@ -156,10 +156,10 @@ def generate_boundary_conditions(interval, num_samples):
     return boundary_conditions
 
 class PINN(nn.Module):
-    def __init__(self, input_min, input_max, output_min, output_max):
+    def __init__(self):
         super(PINN, self).__init__()
         N1 = 256  # Number of neurons
-        self.normalization = NormalizationLayer(input_min, input_max)
+        self.normalization = NormalizationLayer()
         self.fourier_embedding = FourierEmbedding(input_dims=5, embed_dims=256, scale=1.0)
         self.fc1 = nn.Linear(256, N1)
         self.fc2 = nn.Linear(N1, N1)
@@ -167,7 +167,7 @@ class PINN(nn.Module):
         self.fc4 = nn.Linear(N1, N1)
         self.fc5 = nn.Linear(N1, N1)
         self.fc_out = nn.Linear(N1, 6)  # Combine outputs into a single layer
-        self.denormalization = DenormalizationLayer(output_min, output_max)
+        self.denormalization = DenormalizationLayer()
         self.initialize_weights()
 
     def forward(self, x):
@@ -197,11 +197,10 @@ class PINN(nn.Module):
                     nn.init.zeros_(m.bias)
 
 class NormalizationLayer(nn.Module):
-    def __init__(self, input_min, input_max):
+    def __init__(self):
         super(NormalizationLayer, self).__init__()
-        self.input_min = torch.tensor(input_min, dtype=torch.float32)
-        self.input_max = torch.tensor(input_max, dtype=torch.float32)
-
+        self.input_min = torch.tensor([-2.5, -2.5, 1, 30e6, 0], device=device)
+        self.input_max = torch.tensor([7.5, 2.5, 100, 70e6, 2 * np.pi], device=device)
     def forward(self, x):
         if self.input_min.device != x.device:
             self.input_min = self.input_min.to(x.device)
@@ -210,10 +209,10 @@ class NormalizationLayer(nn.Module):
         return (x - self.input_min) / (self.input_max - self.input_min)
 
 class DenormalizationLayer(nn.Module):
-    def __init__(self, output_min, output_max):
+    def __init__(self):
         super(DenormalizationLayer, self).__init__()
-        self.output_min = torch.tensor(output_min, dtype=torch.float32)
-        self.output_max = torch.tensor(output_max, dtype=torch.float32)
+        self.output_min = torch.tensor([-1, -1, -2, 1e-8, 1e-8, 1e-8], device=device)
+        self.output_max = torch.tensor([2, 1, 1, 0.1, 25, 5e-5], device=device)
 
     def forward(self, x):
         if self.output_min.device != x.device:
@@ -470,28 +469,6 @@ all_normalized_weights = {
     'ic': torch.tensor([0.2, 0.2, 0.2, 1000, 0.2, 1e6], device=device),
     'sparse': torch.tensor([0.2, 0.2, 0.2, 1000, 0.2, 1e6], device=device)
 }
-
-def calculate_gradients(loss_components, model, optimizer, key=''):
-    gradients = []
-    for i, loss in enumerate(loss_components):
-        optimizer.zero_grad()
-        loss.backward(retain_graph=True)
-
-        grad_list = []
-        for p in model.parameters():
-            if p.grad is not None:
-                grad_list.append(p.grad.view(-1))
-
-        if grad_list:
-            grad_norm = torch.norm(torch.cat(grad_list))
-            gradients.append(grad_norm.item())
-            print(f'Yes gradients found for loss component {i} ({key})')
-        else:
-            print(f'No gradients found for loss component {i} ({key})')
-
-        optimizer.zero_grad()  # Reset gradients after each computation
-
-    return gradients
 
 def bc_calc_loss(model, boundary_conditions, criterion):
     bc_losses = []
@@ -931,8 +908,8 @@ def calculate_range_and_divergence(variable, name):
     print('')
 
 def prepare_inputs_outputs(batch_data):
-    inputs = [batch_data[:, i:i+1].requires_grad_() for i in range(5)]
-    outputs = [batch_data[:, i+5:i+6].requires_grad_() for i in range(6)]
+    inputs = [batch_data[:, i:i+1] for i in range(5)]
+    outputs = [batch_data[:, i+5:i+6] for i in range(6)]
     return inputs, outputs
 
 def calculate_ic_losses(model, inputs, outputs, criterion):
@@ -943,13 +920,7 @@ def calculate_ic_losses(model, inputs, outputs, criterion):
 def main():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     criterion = nn.MSELoss()
-
-    input_min = [-2.5, -2.5, 1, 30e6, 0]
-    input_max = [7.5, 2.5, 100, 70e6, 2 * np.pi]
-    output_min = [-1, -1, -2, 1e-8, 1e-8, 1e-8]
-    output_max = [2, 1, 1, 0.1, 25, 5e-5]
-
-    model = PINN(input_min, input_max, output_min, output_max).to(device)
+    model = PINN().to(device)
     optimizer = optim.Adam(
         model.parameters(),
         lr=optim_config.learning_rate,
@@ -973,7 +944,7 @@ def main():
 
     data_array = np.load("data/preprocessed_clipped.npy")
     dataset = CustomDataset(data_array, num_intervals=10, num_simulations=5)
-    data_loader = IntervalDataLoader(dataset, batch_size=256)
+    data_loader = IntervalDataLoader(dataset, batch_size=64)
 
     tot_epoch = 0
 
@@ -982,14 +953,14 @@ def main():
             weights = initial_weights
 
         for epoch in range(epochs):
+            print(f'epoch {epoch}')
             total_loss = 0.0
 
-            batch_size = 256
+            batch_size = 64
             batch_size_ic = batch_size
             ic_batch = dataset.get_initial_condition_batch(batch_size_ic).to(device)
             ic_inputs, ic_outputs = prepare_inputs_outputs(ic_batch)
             raw_ic_losses = [criterion(model(torch.cat(ic_inputs, dim=1))[i], ic_outputs[i].squeeze()) for i in range(6)]
-
 
             num_intervals = 10
             num_components_pde = 6
@@ -1005,7 +976,8 @@ def main():
 
 # Loop over batches and intervals
             for interval, batch_data in enumerate(data_loader):
-                batch_data = batch_data.to(device)
+                print(f'interval {interval}')
+                #batch_data = batch_data.to(device)
                 inputs, outputs = prepare_inputs_outputs(batch_data)
                 x_sparse, y_sparse, t_sparse, Re_sparse, theta_sparse = [x.float() for x in inputs]
                 u_sparse, v_sparse, p_sparse, k_sparse, omega_sparse, c_sparse = [y.float() for y in outputs]
@@ -1082,7 +1054,7 @@ def main():
 
 # Compute sum of temporal weighted losses for each key
             sum_temporal_weighted_losses = {
-                key: temporal_weighted_losses[key].sum(dim=0)  # Summing over the interval dimension
+                key: temporal_weighted_losses[key].sum(dim=0)
                 for key in ['bc', 'pde', 'sparse']
             }
 
@@ -1111,7 +1083,7 @@ def main():
 # Perform backward pass
                 for key in ['bc', 'pde', 'sparse']:
                     for i in range(len(weights[key])):
-                        model.zero_grad()  # Clear previous gradients
+                        model.zero_grad()
                         normalized_losses[key][i].backward(retain_graph=True)  # Compute gradients
 
                         # Calculate gradient norm
@@ -1135,7 +1107,7 @@ def main():
                             weight_update.append(updated_weight)
                         else:
                             weight_update.append(weight.item())
-                    if len(weight_update) == 0:  # Handle empty weight_update
+                    if len(weight_update) == 0:
                         print(f"No gradients found for {key}, skipping weight update")
                         continue
 
@@ -1174,7 +1146,6 @@ def main():
                             sum_temporal_weighted_losses['sparse'],
                             sum_temporal_weighted_losses['pde'],
                             weights, temporal_weights, model, dataset, scheduler.get_last_lr()[0])
-#--- train step --------------------------------------------------------------
 
 if __name__ == "__main__":
     main()
