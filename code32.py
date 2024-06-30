@@ -928,6 +928,9 @@ def main():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     criterion = nn.MSELoss().cuda()
     model = PINN().to(device)
+
+    model.load_state_dict(torch.load('./model/c31_1k.pth'))
+
     optimizer = optim.Adam(
         model.parameters(),
         lr=optim_config.learning_rate,
@@ -947,7 +950,7 @@ def main():
 
     print('scheduler')
     run_schedule = [
-        (5000, all_ones_weights),
+        (25000, all_ones_weights),
     ]
 
     data_array = np.load("data/preprocessed_clipped.npy")
@@ -964,7 +967,7 @@ def main():
             print(f'epoch {epoch}')
             total_loss = 0.0
 
-            batch_size = 64
+            batch_size = 256
             batch_size_ic = batch_size
             ic_batch = dataset.get_initial_condition_batch(batch_size_ic).to(device)
             ic_inputs, ic_outputs = prepare_inputs_outputs(ic_batch)
