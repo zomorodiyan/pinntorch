@@ -78,10 +78,12 @@ optim_config.weight_decay = 1.0e-4
 N_intervals = 10
 
 N_loss_print = 1
-N_save_model = 1000
+N_save_model = 2000
 N_weight_update = 50
-N_plot_fields = 100
-N_plot_tweight = 100
+N_plot_fields = 500
+N_plot_residuals = 500
+N_plot_tweight = 500
+N_plot_error = 500
 N_log_metrics = 50
 
 def save_model(model, path):
@@ -90,7 +92,7 @@ def save_model(model, path):
 def generate_boundary_conditions(interval, num_samples):
     Re_medium = 1.225 * 9.0 * 80.0 / 1.7894e-5
     U_in = 1.0 # U_star ≡ U_in so the non-dim version is 1.0
-    k_in_value = 1.0#3 / 2 * (0.05 * U_in) ** 2
+    k_in_value = 3 / 2 * (0.05 * U_in) ** 2
     omega_in_value = 25 # actual omega_in is higher but I have cliped omega > 25
 
     t_low, t_high = interval * (100 // N_intervals), (interval + 1) * (100 // N_intervals)
@@ -624,26 +626,29 @@ def log_metrics(writer, tot_epoch, epoch, total_loss, ic_total_loss, bc_total_lo
             writer.add_scalar(f'weights/i/pde/{pde_names[i]}', weights['pde'][i], epoch)
 
     # Log temporal weights
-    if epoch % N_plot_tweight == 0 and epoch != 0:
+    if epoch % N_plot_tweight == 0:
         # Create a logarithmic plot
         fig, ax = plt.subplots(figsize=(10, 6))
         ax.set_yscale('log')
-
+        # generate for x_axis
         eps2 = 0.2
         x_bc = np.array([i for i in range(10)])-eps2
         x_pde = np.array([i for i in range(10)])
         x_sparse = np.array([i for i in range(10)])+eps2
-        # Plot all the values with different markers
+        # Define edge colors for bc segments
+        bc_edge_colors = ['black', 'black', 'black', 'black', 'red', 'red', 'red', 'red', 'red', 'red', 'blue', 'green', 'green', 'green']
+        # Define unique edge colors for pde and sparse
+        pde_edge_colors = ['black', 'red', 'blue', 'green', 'yellow', 'purple']
+        sparse_edge_colors = ['black', 'red', 'blue', 'green', 'yellow', 'purple']
         for interval in range(10):
-            ax.scatter([x_bc[interval]]*14,
-                       temporal_weights['bc'][interval].cpu().detach().numpy(),
-                       color='green', marker='^', label='bc' if interval == 0 else "")
+            ax.scatter([x_bc[interval]]*14, temporal_weights['bc'][interval].cpu().detach().numpy(),
+              color='green', marker='^', edgecolors=bc_edge_colors[i], label='bc' if interval == 0 else "")
             ax.scatter([x_pde[interval]]*6,
                        temporal_weights['pde'][interval].cpu().detach().numpy(),
-                       color='blue', marker='o', label='pde' if interval == 0 else "")
+                       color='blue', marker='o', edgecolors=pde_edge_colors[i], label='pde' if interval == 0 else "")
             ax.scatter([x_sparse[interval]]*6,
                        temporal_weights['sparse'][interval].cpu().detach().numpy(),
-                       color='red', marker='s', label='sparse' if interval == 0 else "")
+                       color='red', marker='s', edgecolors=sparse_edge_colors[i], label='sparse' if interval == 0 else "")
 
         # Add titles and labels
         ax.set_title('Temporal Weights')
@@ -720,14 +725,38 @@ def log_metrics(writer, tot_epoch, epoch, total_loss, ic_total_loss, bc_total_lo
         fig = plot_fields(x,y,u,v,p,k,omega,c, snapshot, simulation, f'c27_actual_t100', U_star = 9.0)
         writer.add_figure('Actual t = 100s Fields', fig, epoch)
 
-    if epoch % N_plot_fields == 0 and epoch != 0:
+
+    if epoch % N_plot_residuals== 0:
+        snapshot, simulation = 1,1
+        plot_data = dataset.get_plotting_data(snapshot=snapshot, simulation=simulation).to(device)
+        plot_inputs, _ = prepare_inputs_outputs(plot_data)
+        x, y, _, _, _ = plot_inputs
+        continuity, x_mom, y_mom, k_tr, omega_tr, conv_diff =\
+          pde_residuals(model, *plot_inputs)
+        fig = plot_fields(x,y,continuity, x_mom, y_mom, k_tr, omega_tr,
+          conv_diff, snapshot, simulation, f'c32_resi_t1_epoch{epoch}', U_star = 9.0)
+        writer.add_figure('Residuals t = 1s', fig, epoch)
+
+    if epoch % N_plot_error == 0:
+        snapshot, simulation = 1,1
+        plot_data = dataset.get_plotting_data(snapshot=snapshot, simulation=simulation)
+        plot_inputs, plot_outputs = prepare_inputs_outputs(plot_data)
+        x,y,t,Re,theta = plot_inputs
+        u,v,p,k,omega,c = plot_outputs
+        u_pred, v_pred, p_pred, k_pred, omega_pred, c_pred =\
+          model(torch.cat([x, y, t, Re, theta], dim=1))
+        fig = plot_fields(x,y,u_pred-u,v_pred-v,p_pred-p,k_pred-k,
+          omega_pred-omega, c_pred-c, snapshot, simulation, f'c27_actual_t1', U_star = 9.0)
+        writer.add_figure('Errors t = 1s Fields', fig, epoch)
+
+    if epoch % N_plot_fields == 0:
 # --- predictions ------------------------------------------------------------
         snapshot, simulation = 1,1
         plot_data = dataset.get_plotting_data(snapshot=snapshot, simulation=simulation).to(device)
         plot_inputs, _ = prepare_inputs_outputs(plot_data)
         x,y,t,Re,theta = plot_inputs
         u, v, p, k, omega, c = model(torch.cat([x, y, t, Re, theta], dim=1))
-        fig = plot_fields(x,y,u,v,p,k,omega,c, snapshot, simulation, f'c27_pred_t1_epoch{epoch}')
+        fig = plot_fields(x,y,u,v,p,k,omega,c, snapshot, simulation, f'c27_pred_t1_epoch{epoch}', U_star = 9.0)
         writer.add_figure('Predicted t = 1s Fields', fig, epoch)
 
         snapshot, simulation = 2,1
@@ -735,7 +764,7 @@ def log_metrics(writer, tot_epoch, epoch, total_loss, ic_total_loss, bc_total_lo
         plot_inputs, _ = prepare_inputs_outputs(plot_data)
         x,y,t,Re,theta = plot_inputs
         u, v, p, k, omega, c = model(torch.cat([x, y, t, Re, theta], dim=1))
-        fig = plot_fields(x,y,u,v,p,k,omega,c, snapshot, simulation, f'c27_pred_t2_epoch{epoch}')
+        fig = plot_fields(x,y,u,v,p,k,omega,c, snapshot, simulation, f'c27_pred_t2_epoch{epoch}', U_star = 9.0)
         writer.add_figure('Predicted t = 2s Fields', fig, epoch)
 
         snapshot, simulation = 4,1
@@ -743,7 +772,7 @@ def log_metrics(writer, tot_epoch, epoch, total_loss, ic_total_loss, bc_total_lo
         plot_inputs, _ = prepare_inputs_outputs(plot_data)
         x,y,t,Re,theta = plot_inputs
         u, v, p, k, omega, c = model(torch.cat([x, y, t, Re, theta], dim=1))
-        fig = plot_fields(x,y,u,v,p,k,omega,c, snapshot, simulation, f'c27_pred_t4_epoch{epoch}')
+        fig = plot_fields(x,y,u,v,p,k,omega,c, snapshot, simulation, f'c27_pred_t4_epoch{epoch}', U_star = 9.0)
         writer.add_figure('Predicted t = 4s Fields', fig, epoch)
 
         snapshot, simulation = 8,1
@@ -751,7 +780,7 @@ def log_metrics(writer, tot_epoch, epoch, total_loss, ic_total_loss, bc_total_lo
         plot_inputs, _ = prepare_inputs_outputs(plot_data)
         x,y,t,Re,theta = plot_inputs
         u, v, p, k, omega, c = model(torch.cat([x, y, t, Re, theta], dim=1))
-        fig = plot_fields(x,y,u,v,p,k,omega,c, snapshot, simulation, f'c27_pred_t8_epoch{epoch}')
+        fig = plot_fields(x,y,u,v,p,k,omega,c, snapshot, simulation, f'c27_pred_t8_epoch{epoch}', U_star = 9.0)
         writer.add_figure('Predicted t = 8s Fields', fig, epoch)
 
         snapshot, simulation = 16,1
@@ -759,7 +788,7 @@ def log_metrics(writer, tot_epoch, epoch, total_loss, ic_total_loss, bc_total_lo
         plot_inputs, _ = prepare_inputs_outputs(plot_data)
         x,y,t,Re,theta = plot_inputs
         u, v, p, k, omega, c = model(torch.cat([x, y, t, Re, theta], dim=1))
-        fig = plot_fields(x,y,u,v,p,k,omega,c, snapshot, simulation, f'c27_pred_t16_epoch{epoch}')
+        fig = plot_fields(x,y,u,v,p,k,omega,c, snapshot, simulation, f'c27_pred_t16_epoch{epoch}', U_star = 9.0)
         writer.add_figure('Predicted t = 16s Fields', fig, epoch)
 
         snapshot, simulation = 32,1
@@ -767,7 +796,7 @@ def log_metrics(writer, tot_epoch, epoch, total_loss, ic_total_loss, bc_total_lo
         plot_inputs, _ = prepare_inputs_outputs(plot_data)
         x,y,t,Re,theta = plot_inputs
         u, v, p, k, omega, c = model(torch.cat([x, y, t, Re, theta], dim=1))
-        fig = plot_fields(x,y,u,v,p,k,omega,c, snapshot, simulation, f'c27_pred_t32_epoch{epoch}')
+        fig = plot_fields(x,y,u,v,p,k,omega,c, snapshot, simulation, f'c27_pred_t32_epoch{epoch}', U_star = 9.0)
         writer.add_figure('Predicted t = 32s Fields', fig, epoch)
 
         snapshot, simulation = 64,1
@@ -775,7 +804,7 @@ def log_metrics(writer, tot_epoch, epoch, total_loss, ic_total_loss, bc_total_lo
         plot_inputs, _ = prepare_inputs_outputs(plot_data)
         x,y,t,Re,theta = plot_inputs
         u, v, p, k, omega, c = model(torch.cat([x, y, t, Re, theta], dim=1))
-        fig = plot_fields(x,y,u,v,p,k,omega,c, snapshot, simulation, f'c27_pred_t64_epoch{epoch}')
+        fig = plot_fields(x,y,u,v,p,k,omega,c, snapshot, simulation, f'c27_pred_t64_epoch{epoch}', U_star = 9.0)
         writer.add_figure('Predicted t = 64s Fields', fig, epoch)
 
         snapshot, simulation = 100,1
@@ -783,14 +812,14 @@ def log_metrics(writer, tot_epoch, epoch, total_loss, ic_total_loss, bc_total_lo
         plot_inputs, _ = prepare_inputs_outputs(plot_data)
         x,y,t,Re,theta = plot_inputs
         u, v, p, k, omega, c = model(torch.cat([x, y, t, Re, theta], dim=1))
-        fig = plot_fields(x,y,u,v,p,k,omega,c, snapshot, simulation, f'c27_pred_t100_epoch{epoch}')
+        fig = plot_fields(x,y,u,v,p,k,omega,c, snapshot, simulation, f'c27_pred_t100_epoch{epoch}', U_star = 9.0)
         writer.add_figure('Predicted t = 100s Fields', fig, epoch)
 
     if epoch % N_loss_print == 0:
         print(f'Epoch {epoch}, Loss: {total_loss}')
 
     if epoch % N_save_model == 0 and epoch != 0:
-        save_model(model, 'c31_1k.pth')
+        save_model(model, 'c32_1gpu.pth')
 
 def plot_fields(x, y, u, v, p, k, omega, c, snapshot,
                 simulation,  name = 'new_fig', U_star = None, save_dir="figures"):
@@ -883,6 +912,94 @@ def plot_fields(x, y, u, v, p, k, omega, c, snapshot,
 
         return fig1
 
+def plot_residuals(x, y, x_mom, y_mom, continuity, k_tr, omega_tr, conv_diff, snapshot, simulation,  name = 'new_fig', save_dir="figures"):
+    with torch.no_grad():
+        L_star = 80.0
+
+        # Convert residuals to numpy arrays for plotting
+        x_mom = x_mom.cpu().numpy()
+        y_mom = y_mom.cpu().numpy()
+        continuity = continuity.cpu().numpy()
+        k_tr = k_tr.cpu().numpy()
+        omega_tr = omega_tr.cpu().numpy()
+        conv_diff = conv_diff.cpu().numpy()
+        x = x.cpu()
+        y = y.cpu()
+
+        radius = 40.0 / L_star
+
+        # dimensionalize the pde residuals if U_star is provided
+        if U_star is not None:
+            x = x * L_star
+            y = y * L_star
+            x_mom = x_mom * rho * U_star**2 / L_star
+            y_mom = y_mom * rho * U_star**2 / L_star
+            continuity = continuity * rho * U_star / L_star
+            k_tr = k_tr * rho * U_star**3 / L_star
+            omega_tr = omega_tr * U_star**2 / L_star**2
+            radius = 40.0
+
+        # Triangulation for plotting
+        triang = tri.Triangulation(x.squeeze(), y.squeeze())
+        x_tri = x[triang.triangles].mean(axis=1)
+        y_tri = y[triang.triangles].mean(axis=1)
+
+        # Mask the triangles inside the circle
+        center = (0.0, 0.0)
+        dist_from_center = np.sqrt((x_tri - center[0]) ** 2 + (y_tri - center[1]) ** 2)
+        mask = dist_from_center < radius
+        mask = mask.squeeze()
+        mask = mask.cpu().numpy().astype(bool)
+        triang.set_mask(mask)
+
+        # Plotting
+        kk = 1
+        fig1 = plt.figure(figsize=(kk*18, kk*12))
+
+        plt.subplot(3, 2, 1)
+        plt.tricontourf(triang, x_mom.squeeze(), cmap='jet', levels=100)
+        plt.colorbar()
+        plt.title(f'x-momentum residuals at time {snapshot}s ')
+        plt.tight_layout()
+
+        plt.subplot(3, 2, 3)
+        plt.tricontourf(triang, y_mom.squeeze(), cmap='jet', levels=100)
+        plt.colorbar()
+        plt.title(f'y-momentum residuals at time {snapshot}s ')
+        plt.tight_layout()
+
+        plt.subplot(3, 2, 5)
+        plt.tricontourf(triang, continuity.squeeze(), cmap='jet', levels=100)
+        plt.colorbar()
+        plt.title(f'Continuity residuals at time {snapshot}s')
+        plt.tight_layout()
+
+
+        plt.subplot(3, 2, 2)
+        plt.tricontourf(triang, k_tr.squeeze(), cmap='jet', levels=100)
+        plt.colorbar()
+        plt.title(f'$k$ residuals at time {snapshot}s')
+        plt.tight_layout()
+
+        omega_plot = omega.squeeze()
+        plt.subplot(3, 2, 4)
+        plt.tricontourf(triang, omega_tr.squeeze(), cmap='jet', levels=100)
+        plt.colorbar()
+        plt.title(f'$\omega$-transport residuals time {snapshot}s')
+        plt.tight_layout()
+
+        plt.subplot(3, 2, 6)
+        plt.tricontourf(triang, conv_diff.squeeze(), cmap='jet', levels=100)
+        plt.colorbar()
+        plt.title(f'Convection-Diffusion residuals at time {snapshot}s')
+        plt.tight_layout()
+
+        # Save the figure
+        if not os.path.isdir(save_dir):
+            os.makedirs(save_dir)
+        plt.savefig(os.path.join(save_dir, f"{name}_residuals_t_{snapshot}_sim_{simulation}.png"))
+        return fig1
+
 def check_tensor_stats(tensor, name):
     if tensor.numel() == 0:
         print(f"{name} is empty")
@@ -929,7 +1046,7 @@ def main():
     criterion = nn.MSELoss().cuda()
     model = PINN().to(device)
 
-    model.load_state_dict(torch.load('./model/c31_1k.pth'))
+    model.load_state_dict(torch.load('./models/c31_5k.pth'))
 
     optimizer = optim.Adam(
         model.parameters(),
@@ -939,7 +1056,7 @@ def main():
         weight_decay=1e-4
     )
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=optim_config.decay_steps, gamma=optim_config.decay_rate)
-    writer = SummaryWriter(log_dir='runs_/c31_light_Jun29_02')
+    writer = SummaryWriter(log_dir='runs_/c32_light_1gpu_2')
 
     weights = {
         'bc': torch.ones(14, device=device),
@@ -1021,7 +1138,7 @@ def main():
 
 
 # Calculate temporal weights
-            eps_ = 10000
+            eps_ = 1000
             temporal_weights = {
                 key: torch.ones((10, len(weights[key])), device=device)
                 for key in ['bc', 'pde', 'sparse']
