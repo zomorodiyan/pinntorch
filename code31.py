@@ -14,14 +14,14 @@ from ml_collections import ConfigDict
 from torch.profiler import profile, record_function, ProfilerActivity
 import time
 import random
-torch.autograd.set_detect_anomaly(True)
 
 print('run J23 ------------------------- 1 ---------------------------------')
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f'Using device: {device}')
 
 #torch.backends.cudnn.deterministic = True
-torch.backends.cudnn.benchmark = False
+#torch.backends.cudnn.benchmark = False
+#torch.autograd.set_detect_anomaly(True)
 
 def set_seed(seed):
     random.seed(seed)
@@ -78,11 +78,11 @@ optim_config.weight_decay = 1.0e-4
 N_intervals = 10
 
 N_loss_print = 1
-N_save_model = 2000
-N_weight_update = 1
+N_save_model = 1000
+N_weight_update = 50
 N_plot_fields = 100
 N_plot_tweight = 100
-N_log_metrics = 1
+N_log_metrics = 50
 
 def save_model(model, path):
     torch.save(model.state_dict(), path)
@@ -159,14 +159,14 @@ def generate_boundary_conditions(interval, num_samples):
 class PINN(nn.Module):
     def __init__(self):
         super(PINN, self).__init__()
-        N1 = 256  # Number of neurons
+        N1 = 128  # Number of neurons
         self.normalization = NormalizationLayer()
         self.fourier_embedding = FourierEmbedding(input_dims=5, embed_dims=256, scale=1.0)
         self.fc1 = nn.Linear(256, N1)
         self.fc2 = nn.Linear(N1, N1)
         self.fc3 = nn.Linear(N1, N1)
         self.fc4 = nn.Linear(N1, N1)
-        self.fc5 = nn.Linear(N1, N1)
+#       self.fc5 = nn.Linear(N1, N1)
         self.fc_out = nn.Linear(N1, 6)  # Combine outputs into a single layer
         self.denormalization = DenormalizationLayer()
         self.initialize_weights()
@@ -178,7 +178,7 @@ class PINN(nn.Module):
         x = F.gelu(self.fc2(x))
         x = F.gelu(self.fc3(x))
         x = F.gelu(self.fc4(x))
-        x = F.gelu(self.fc5(x))
+#       x = F.gelu(self.fc5(x))
         outputs = self.fc_out(x)
         outputs = self.denormalization(outputs)
         u, v, p, k, omega, c = outputs[:, 0], outputs[:, 1], outputs[:, 2], outputs[:, 3], outputs[:, 4], outputs[:, 5]
@@ -571,6 +571,7 @@ def log_metrics(writer, tot_epoch, epoch, total_loss, ic_total_loss, bc_total_lo
                 ic_losses, bc_losses, sparse_losses, pde_losses, weights, temporal_weights,
                 model, dataset, lr):
 
+    print('log metrics inside method')
     allocated_memory = torch.cuda.memory_allocated() / 1024**2
     reserved_memory = torch.cuda.memory_reserved() / 1024**2
     grad_norm = sum(p.grad.norm() for p in model.parameters() if p.grad is not None)
@@ -789,7 +790,7 @@ def log_metrics(writer, tot_epoch, epoch, total_loss, ic_total_loss, bc_total_lo
         print(f'Epoch {epoch}, Loss: {total_loss}')
 
     if epoch % N_save_model == 0 and epoch != 0:
-        save_model(model, 'c26_20K_u9.pth')
+        save_model(model, 'c31_1k.pth')
 
 def plot_fields(x, y, u, v, p, k, omega, c, snapshot,
                 simulation,  name = 'new_fig', U_star = None, save_dir="figures"):
@@ -923,8 +924,9 @@ def calculate_ic_losses(model, inputs, outputs, criterion):
     return [criterion(predictions[i], outputs[i].squeeze()) for i in range(6)]
 
 def main():
+    print('main')
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    criterion = nn.MSELoss()
+    criterion = nn.MSELoss().cuda()
     model = PINN().to(device)
     optimizer = optim.Adam(
         model.parameters(),
@@ -934,7 +936,7 @@ def main():
         weight_decay=1e-4
     )
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=optim_config.decay_steps, gamma=optim_config.decay_rate)
-    writer = SummaryWriter(log_dir='runs_/c30_Jun28_06')
+    writer = SummaryWriter(log_dir='runs_/c31_light_Jun29_02')
 
     weights = {
         'bc': torch.ones(14, device=device),
@@ -943,13 +945,14 @@ def main():
         'sparse': torch.ones(6, device=device)
     }
 
+    print('scheduler')
     run_schedule = [
         (5000, all_ones_weights),
     ]
 
     data_array = np.load("data/preprocessed_clipped.npy")
     dataset = CustomDataset(data_array, num_intervals=10, num_simulations=5)
-    data_loader = IntervalDataLoader(dataset, batch_size=64)
+    data_loader = IntervalDataLoader(dataset, batch_size=256)
 
     tot_epoch = 0
 
@@ -958,6 +961,7 @@ def main():
             weights = initial_weights
 
         for epoch in range(epochs):
+            print(f'epoch {epoch}')
             total_loss = 0.0
 
             batch_size = 64
@@ -1097,7 +1101,6 @@ def main():
                         if weight != 0:
                             updated_weight = total_norm / max(grad, eps_1)
                             weight_update.append(updated_weight)
-                            print('grad:',grad)
                         else:
                             weight_update.append(weight.item())
                     if len(weight_update) == 0:
@@ -1133,6 +1136,7 @@ def main():
 
 #--- log metrics (tensorboard) -----------------------------------------------
             if epoch % N_log_metrics == 0:
+                print('log metrics in main')
                 log_metrics(writer, tot_epoch, epoch, total_loss, ic_total_loss,
                             bc_total_loss, sparse_total_loss, pde_total_loss,
                             [normalized_raw_losses['ic'][i].item() for i in range(6)],
