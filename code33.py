@@ -824,7 +824,7 @@ def log_metrics(writer, tot_epoch, epoch, total_loss, ic_total_loss, bc_total_lo
         print(f'Epoch {epoch}, Loss: {total_loss}')
 
     if epoch % N_save_model == 0 and epoch != 0:
-        save_model(model, 'c32_256x5_b256_1gpu_5k.pth')
+        save_model(model, 'c33_b128_1gpu_2k.pth')
 
 def plot_fields(x, y, u, v, p, k, omega, c, snapshot,
                 simulation,  name = 'new_fig', U_star = None, save_dir="figures"):
@@ -1051,7 +1051,7 @@ def main():
     criterion = nn.MSELoss().cuda()
     model = PINN().to(device)
 
-#   model.load_state_dict(torch.load('./models/c32_1gpu_6k.pth'))
+    model.load_state_dict(torch.load('./models/c31_5k.pth'))
 
     optimizer = optim.Adam(
         model.parameters(),
@@ -1061,7 +1061,7 @@ def main():
         weight_decay=1e-4
     )
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=optim_config.decay_steps, gamma=optim_config.decay_rate)
-    writer = SummaryWriter(log_dir='runs_/c33_256x5_1gpu_batch256_2')
+    writer = SummaryWriter(log_dir='runs/c33_b128_01')
 
     weights = {
         'bc': torch.ones(14, device=device),
@@ -1075,9 +1075,12 @@ def main():
         (25000, all_ones_weights),
     ]
 
+    batch_size = 128
+    batch_size_ic = 2 * batch_size
+
     data_array = np.load("data/preprocessed_clipped.npy")
     dataset = CustomDataset(data_array, num_intervals=10, num_simulations=5)
-    data_loader = IntervalDataLoader(dataset, batch_size=256)
+    data_loader = IntervalDataLoader(dataset, batch_size=batch_size)
 
     tot_epoch = 0
 
@@ -1088,9 +1091,6 @@ def main():
         for epoch in range(epochs):
             print(f'epoch {epoch}')
             total_loss = 0.0
-
-            batch_size = 256
-            batch_size_ic = 2 * batch_size
             ic_batch = dataset.get_initial_condition_batch(batch_size_ic).to(device)
             ic_inputs, ic_outputs = prepare_inputs_outputs(ic_batch)
             raw_ic_losses = torch.stack([criterion(model(torch.cat(ic_inputs,
