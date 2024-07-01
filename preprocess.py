@@ -30,9 +30,9 @@ def preprocess_data(file_paths):
         omega_ref = omega_ref * L_star / U_star
 
         # Clip extreme values
-        k_ref = np.clip(k_ref, 1e-8, 0.1)
-        omega_ref = np.clip(omega_ref, 1e-8, 25.0) # omega_inle = tomega_max
-        c_ref = np.clip(c_ref, 1e-8, 5e-5)
+        k_ref = np.clip(k_ref, 1e-12, 0.1)
+        omega_ref = np.clip(omega_ref, 1e-12, 25.0) # omega_inle = tomega_max
+        c_ref = np.clip(c_ref, 1e-12, 5e-5)
 
         # Store processed data
         all_data_files.append((coords, u_ref, v_ref, p_ref, k_ref, omega_ref, c_ref, Re, theta))
