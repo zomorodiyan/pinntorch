@@ -68,7 +68,7 @@ optim_config.optimizer = "Adam"
 optim_config.beta1 = 0.9
 optim_config.beta2 = 0.999
 optim_config.eps = 1e-8
-optim_config.learning_rate = 1e-3
+optim_config.learning_rate = 1e-4
 optim_config.decay_rate = 0.9
 optim_config.decay_steps = 500
 optim_config.grad_accum_steps = 0
@@ -77,14 +77,14 @@ optim_config.weight_decay = 1.0e-4
 
 N_intervals = 10
 
-N_loss_print = 1
-N_save_model = 2000
-N_weight_update = 10
-N_plot_fields = 500
-N_plot_residuals = 1000
-N_plot_tweight = 500
-N_plot_error = 1000
 N_log_metrics = 10
+N_loss_print = 10
+N_weight_update = 10
+N_plot_fields = 100
+N_plot_tweight = 100
+N_save_model = 500
+N_plot_error = 500
+N_plot_residuals = 500
 
 def save_model(model, path):
     torch.save(model.state_dict(), path)
@@ -93,7 +93,7 @@ def generate_boundary_conditions(interval, num_samples):
     Re_medium = 1.225 * 9.0 * 80.0 / 1.7894e-5
     U_in = 1.0 # U_star ≡ U_in so the non-dim version is 1.0
     k_in_value = 3 / 2 * (0.05 * U_in) ** 2
-    omega_in_value = 25 # actual omega_in is higher but I have cliped omega > 25
+    omega_in_value = 25.0 # if not cliped 2000*80/9
 
     t_low, t_high = interval * (100 // N_intervals), (interval + 1) * (100 // N_intervals)
     theta_values = torch.tensor([0, np.pi/4, np.pi/2, 3*np.pi/4, np.pi,
@@ -186,16 +186,17 @@ class PINN(nn.Module):
         u, v, p, k, omega, c = outputs[:, 0], outputs[:, 1], outputs[:, 2], outputs[:, 3], outputs[:, 4], outputs[:, 5]
         return [u, v, p, k, omega, c]
 
-    def _initialize_weights(self):
-        for m in self.modules():
-            if isinstance(m, nn.Linear):
-                nn.init.xavier_uniform_(m.weight)
-                if m.bias is not None:
-                    nn.init.zeros_(m.bias)
     def initialize_weights(self):
         for m in self.modules():
             if isinstance(m, nn.Linear):
                 nn.init.kaiming_normal_(m.weight, mode='fan_in', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+
+    def _initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
                 if m.bias is not None:
                     nn.init.zeros_(m.bias)
 
@@ -214,7 +215,7 @@ class NormalizationLayer(nn.Module):
 class DenormalizationLayer(nn.Module):
     def __init__(self):
         super(DenormalizationLayer, self).__init__()
-        self.output_min = torch.tensor([-1, -1, -2, 1e-8, 1e-8, 1e-8], device=device)
+        self.output_min = torch.tensor([-1, -1, -2, 1e-12, 1e-12, 1e-12], device=device)
         self.output_max = torch.tensor([2, 1, 1, 0.1, 25, 5e-5], device=device)
 
     def forward(self, x):
@@ -635,20 +636,15 @@ def log_metrics(writer, tot_epoch, epoch, total_loss, ic_total_loss, bc_total_lo
         x_bc = np.array([i for i in range(10)])-eps2
         x_pde = np.array([i for i in range(10)])
         x_sparse = np.array([i for i in range(10)])+eps2
-        # Define edge colors for bc segments
-        bc_edge_colors = ['black', 'black', 'black', 'black', 'red', 'red', 'red', 'red', 'red', 'red', 'blue', 'green', 'green', 'green']
-        # Define unique edge colors for pde and sparse
-        pde_edge_colors = ['black', 'red', 'blue', 'green', 'yellow', 'purple']
-        sparse_edge_colors = ['black', 'red', 'blue', 'green', 'yellow', 'purple']
         for interval in range(10):
             ax.scatter([x_bc[interval]]*14, temporal_weights['bc'][interval].cpu().detach().numpy(),
-              color='green', marker='^', edgecolors=bc_edge_colors[i], label='bc' if interval == 0 else "")
+              color='green', marker='^', label='bc' if interval == 0 else "")
             ax.scatter([x_pde[interval]]*6,
                        temporal_weights['pde'][interval].cpu().detach().numpy(),
-                       color='blue', marker='o', edgecolors=pde_edge_colors[i], label='pde' if interval == 0 else "")
+                       color='blue', marker='o', label='pde' if interval == 0 else "")
             ax.scatter([x_sparse[interval]]*6,
                        temporal_weights['sparse'][interval].cpu().detach().numpy(),
-                       color='red', marker='s', edgecolors=sparse_edge_colors[i], label='sparse' if interval == 0 else "")
+                       color='red', marker='s', label='sparse' if interval == 0 else "")
 
         # Add titles and labels
         ax.set_title('Temporal Weights')
@@ -824,7 +820,7 @@ def log_metrics(writer, tot_epoch, epoch, total_loss, ic_total_loss, bc_total_lo
         print(f'Epoch {epoch}, Loss: {total_loss}')
 
     if epoch % N_save_model == 0 and epoch != 0:
-        save_model(model, 'c33_b128_1gpu_2k.pth')
+        save_model(model, 'c33_5k_plus.pth')
 
 def plot_fields(x, y, u, v, p, k, omega, c, snapshot,
                 simulation,  name = 'new_fig', U_star = None, save_dir="figures"):
@@ -1051,7 +1047,7 @@ def main():
     criterion = nn.MSELoss().cuda()
     model = PINN().to(device)
 
-    model.load_state_dict(torch.load('./models/c31_5k.pth'))
+#   model.load_state_dict(torch.load('./models/c31_5k.pth'))
 
     optimizer = optim.Adam(
         model.parameters(),
@@ -1061,7 +1057,7 @@ def main():
         weight_decay=1e-4
     )
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=optim_config.decay_steps, gamma=optim_config.decay_rate)
-    writer = SummaryWriter(log_dir='runs/c33_b128_01')
+    writer = SummaryWriter(log_dir='runs/c33_b256_03')
 
     weights = {
         'bc': torch.ones(14, device=device),
@@ -1076,8 +1072,6 @@ def main():
     ]
 
     batch_size = 128
-    batch_size_ic = 2 * batch_size
-
     data_array = np.load("data/preprocessed_clipped.npy")
     dataset = CustomDataset(data_array, num_intervals=10, num_simulations=5)
     data_loader = IntervalDataLoader(dataset, batch_size=batch_size)
@@ -1091,7 +1085,7 @@ def main():
         for epoch in range(epochs):
             print(f'epoch {epoch}')
             total_loss = 0.0
-            ic_batch = dataset.get_initial_condition_batch(batch_size_ic).to(device)
+            ic_batch = dataset.get_initial_condition_batch(batch_size).to(device)
             ic_inputs, ic_outputs = prepare_inputs_outputs(ic_batch)
             raw_ic_losses = torch.stack([criterion(model(torch.cat(ic_inputs,
               dim=1))[i], ic_outputs[i].squeeze()) for i in range(6)])
@@ -1255,6 +1249,8 @@ def main():
 
             optimizer.zero_grad()
             total_loss.backward()
+            # Gradient clipping
+            torch.nn.utils.clip_grad_norm_(model.parameters(), optim_config.clip_norm)
             optimizer.step()
             scheduler.step()
             tot_epoch += 1
