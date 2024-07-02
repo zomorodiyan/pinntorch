@@ -609,22 +609,13 @@ def log_metrics(writer, tot_epoch, epoch, total_loss, ic_total_loss, bc_total_lo
 
     # Log weights
     for i in range(len(bc_losses)):
-        writer.add_scalar(f'weights/bc/{bc_names[i]}', weights['bc'][i], epoch)
+        writer.add_scalar(f'w_bc/{bc_names[i]}', weights['bc'][i], epoch)
     for i in range(len(ic_losses)):
-        writer.add_scalar(f'weights/ic/{ic_names[i]}', weights['ic'][i], epoch)
+        writer.add_scalar(f'w_ic/{ic_names[i]}', weights['ic'][i], epoch)
     for i in range(len(sparse_losses)):
-        writer.add_scalar(f'weights/sparse/{sparse_names[i]}', weights['sparse'][i], epoch)
+        writer.add_scalar(f'w_sparse/{sparse_names[i]}', weights['sparse'][i], epoch)
     for i in range(len(pde_losses)):
-        writer.add_scalar(f'weights/pde/{pde_names[i]}', weights['pde'][i], epoch)
-
-    # Log weights
-    for j in range(10): # 10 is num_intervals
-        for i in range(len(bc_losses)):
-            writer.add_scalar(f'weights/i/bc/{bc_names[i]}', weights['bc'][i], epoch)
-        for i in range(len(sparse_losses)):
-            writer.add_scalar(f'weights/i/sparse/{sparse_names[i]}', weights['sparse'][i], epoch)
-        for i in range(len(pde_losses)):
-            writer.add_scalar(f'weights/i/pde/{pde_names[i]}', weights['pde'][i], epoch)
+        writer.add_scalar(f'w_pde/{pde_names[i]}', weights['pde'][i], epoch)
 
     # Log temporal weights
     if epoch % N_plot_tweight == 0:
@@ -820,7 +811,7 @@ def log_metrics(writer, tot_epoch, epoch, total_loss, ic_total_loss, bc_total_lo
         print(f'Epoch {epoch}, Loss: {total_loss}')
 
     if epoch % N_save_model == 0 and epoch != 0:
-        save_model(model, 'c33_5k_plus.pth')
+        save_model(model, 'c33_10k_plus.pth')
 
 def plot_fields(x, y, u, v, p, k, omega, c, snapshot,
                 simulation,  name = 'new_fig', U_star = None, save_dir="figures"):
@@ -1047,7 +1038,7 @@ def main():
     criterion = nn.MSELoss().cuda()
     model = PINN().to(device)
 
-#   model.load_state_dict(torch.load('./models/c31_5k.pth'))
+    model.load_state_dict(torch.load('./models/c33_10k.pth'))
 
     optimizer = optim.Adam(
         model.parameters(),
@@ -1057,7 +1048,7 @@ def main():
         weight_decay=1e-4
     )
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=optim_config.decay_steps, gamma=optim_config.decay_rate)
-    writer = SummaryWriter(log_dir='runs/c33_b256_03')
+    writer = SummaryWriter(log_dir='runs/c33_01')
 
     weights = {
         'bc': torch.ones(14, device=device),
@@ -1192,12 +1183,27 @@ def main():
                 min_weight = 1.0
 
                 gradient_norms = {
+                    'ic': torch.zeros(6, device=device),
                     'pde': torch.zeros(6, device=device),
                     'sparse': torch.zeros(6, device=device),
                     'bc': torch.zeros(14, device=device)
                 }
 
-                for key in ['bc', 'pde', 'sparse']:
+                mini = 1.0
+                maxi = 100.0
+                min_weights = {
+                    'ic': torch.tensor([maxi, maxi, maxi, maxi, maxi, maxi], device=device),
+                    'pde': torch.tensor([mini, mini, mini, mini, mini, mini], device=device),
+                    # inlet u, v, k, omega (all Dirichlet)
+                    'bc': torch.tensor([mini, mini, mini, mini,
+                                        # symmetry_u,v,p,k,omega (all Neumann),v_Dirichlet
+                                        mini, mini, mini, mini, mini, mini,
+                                        # out_p  wall_u,v,k (all Dirichlet)
+                                        mini, mini, mini, mini], device=device),
+                    'sparse': torch.tensor([maxi, maxi, maxi, maxi, maxi, maxi], device=device)
+                }
+
+                for key in ['ic', 'bc', 'pde', 'sparse']:
                     for i in range(len(weights[key])):
                         model.zero_grad()
                         normalized_raw_losses[key][i].backward(retain_graph=True)  # Compute gradients
@@ -1213,7 +1219,8 @@ def main():
 
                 total_norm = sum([sum(grads) for grads in gradient_norms.values()])
 
-                for key in ['bc', 'pde', 'sparse']:
+
+                for key in ['ic', 'bc', 'pde', 'sparse']:
                     weight_update = []
                     eps_1 = 1e-10
                     for i, (grad, weight) in enumerate(zip(gradient_norms[key], weights[key])):
@@ -1233,7 +1240,8 @@ def main():
                         scaling_factor = max_weight / max_updated_weight
                         weight_update = weight_update * scaling_factor
 
-                    weight_update = torch.clamp(weight_update, min=min_weight)
+                    weight_update = torch.max(weight_update, min_weights[key])
+                    weight_update = torch.clamp(weight_update, max=max_weight)
 
                     alpha_ = 0.1
                     weights[key] = alpha_ * weights[key] + (1 - alpha_) * weight_update
