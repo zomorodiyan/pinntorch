@@ -848,7 +848,7 @@ def log_metrics(writer, tot_epoch, epoch, total_loss, ic_total_loss, bc_total_lo
         print(f'Epoch {epoch}, Loss: {total_loss}')
 
     if epoch % N_save_model == 0 and epoch != 0:
-        save_model(model, 'c35_mini_51.pth')
+        save_model(model, 'c35_61_70.pth')
 
 def plot_fields(x, y, u, v, p, k, omega, c, snapshot,
                 simulation,  name = 'new_fig', U_star = None, save_dir="figures"):
