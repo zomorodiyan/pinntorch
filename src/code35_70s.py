@@ -1075,7 +1075,7 @@ def main():
     criterion = nn.MSELoss().cuda()
     model = PINN().to(device)
 
-    model.load_state_dict(torch.load('./models/c35_51_60.pth'))
+    model.load_state_dict(torch.load('../models/c35_51_60.pth'))
 
     optimizer = optim.Adam(
         model.parameters(),
@@ -1099,7 +1099,7 @@ def main():
     ]
 
     batch_size = 128
-    data_array = np.load("data/preprocessed_clipped.npy")
+    data_array = np.load("../data/preprocessed_clipped.npy")
     dataset = CustomDataset(data_array, num_intervals=10, num_simulations=5)
     data_loader = IntervalDataLoader(dataset, batch_size=batch_size)
 

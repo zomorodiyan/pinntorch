@@ -1075,7 +1075,7 @@ def main():
     criterion = nn.MSELoss().cuda()
     model = PINN().to(device)
 
-    model.load_state_dict(torch.load('./models/c35_61_70.pth'))
+    model.load_state_dict(torch.load('../models/c35_61_70.pth'))
 
     optimizer = optim.Adam(
         model.parameters(),
@@ -1099,7 +1099,7 @@ def main():
     ]
 
     batch_size = 128
-    data_array = np.load("data/preprocessed_clipped.npy")
+    data_array = np.load("../data/preprocessed_clipped.npy")
     dataset = CustomDataset(data_array, num_intervals=10, num_simulations=5)
     data_loader = IntervalDataLoader(dataset, batch_size=batch_size)
 
@@ -1163,7 +1163,7 @@ def main():
             }
 
 # Calculate temporal weights
-            eps_ = 100
+            eps_ = 10
             temporal_weights = {
                 key: torch.ones((10, len(weights[key])), device=device)
                 for key in ['bc', 'pde', 'sparse']
@@ -1215,7 +1215,6 @@ def main():
 #--- update global weights ---------------------------------------------------
             if epoch % N_weight_update == 0 and epoch != 0:
                 max_weight = 1000.0
-                min_weight = 1.0
 
                 gradient_norms = {
                     'ic': torch.zeros(6, device=device),
@@ -1224,10 +1223,10 @@ def main():
                     'bc': torch.zeros(14, device=device)
                 }
 
-                min_bc = 50.0
+                min_bc = 1.0
                 min_ic = 50.0
                 min_sparse = 50.0
-                min_pde = 50.0
+                min_pde = 1.0
                 min_weights = {
                     'ic': torch.tensor([min_ic, min_ic, min_ic, min_ic, min_ic, 2*min_ic], device=device),
                     'pde': torch.tensor([min_pde, min_pde, min_pde, min_pde, min_pde, 2*min_pde], device=device),

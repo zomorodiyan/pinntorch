@@ -14,7 +14,7 @@ from ml_collections import ConfigDict
 from torch.profiler import profile, record_function, ProfilerActivity
 import time
 import random
-os.environ["CUDA_VISIBLE_DEVICES"] = "2"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 print('run J23 ------------------------- 1 ---------------------------------')
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -73,7 +73,7 @@ optim_config.learning_rate = 1e-3
 optim_config.decay_rate = 0.9
 optim_config.decay_steps = 500
 optim_config.grad_accum_steps = 0
-optim_config.clip_norm = 1000.0
+optim_config.clip_norm = 2000.0
 #optim_config.weight_decay = 1.0e-4
 
 N_intervals = 10
@@ -848,7 +848,7 @@ def log_metrics(writer, tot_epoch, epoch, total_loss, ic_total_loss, bc_total_lo
         print(f'Epoch {epoch}, Loss: {total_loss}')
 
     if epoch % N_save_model == 0 and epoch != 0:
-        save_model(model, 'c35_61_70.pth')
+        save_model(model, 'c35_51_60.pth')
 
 def plot_fields(x, y, u, v, p, k, omega, c, snapshot,
                 simulation,  name = 'new_fig', U_star = None, save_dir="figures"):
@@ -1075,7 +1075,7 @@ def main():
     criterion = nn.MSELoss().cuda()
     model = PINN().to(device)
 
-    model.load_state_dict(torch.load('./models/c35_mini_i1_4k.pth'))
+    model.load_state_dict(torch.load('../models/c35_51_60.pth'))
 
     optimizer = optim.Adam(
         model.parameters(),
@@ -1084,7 +1084,7 @@ def main():
         eps=optim_config.eps,
     )
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=optim_config.decay_steps, gamma=optim_config.decay_rate)
-    writer = SummaryWriter(log_dir='runs/c35_mini_i5_1')
+    writer = SummaryWriter(log_dir='runs/c35_51_60')
 
     weights = {
         'bc': torch.ones(14, device=device),
@@ -1099,7 +1099,7 @@ def main():
     ]
 
     batch_size = 128
-    data_array = np.load("data/preprocessed_clipped.npy")
+    data_array = np.load("../data/preprocessed_clipped.npy")
     dataset = CustomDataset(data_array, num_intervals=10, num_simulations=5)
     data_loader = IntervalDataLoader(dataset, batch_size=batch_size)
 
@@ -1163,7 +1163,7 @@ def main():
             }
 
 # Calculate temporal weights
-            eps_ = 100
+            eps_ = 10
             temporal_weights = {
                 key: torch.ones((10, len(weights[key])), device=device)
                 for key in ['bc', 'pde', 'sparse']
@@ -1215,7 +1215,6 @@ def main():
 #--- update global weights ---------------------------------------------------
             if epoch % N_weight_update == 0 and epoch != 0:
                 max_weight = 1000.0
-                min_weight = 1.0
 
                 gradient_norms = {
                     'ic': torch.zeros(6, device=device),
@@ -1224,18 +1223,21 @@ def main():
                     'bc': torch.zeros(14, device=device)
                 }
 
-                mini = 1.0
-                maxi = 50.0
+                min_bc = 1.0
+                min_ic = 50.0
+                min_sparse = 50.0
+                min_pde = 1.0
                 min_weights = {
-                    'ic': torch.tensor([maxi, maxi, maxi, maxi, maxi, maxi], device=device),
-                    'pde': torch.tensor([mini, mini, mini, mini, mini, mini], device=device),
+                    'ic': torch.tensor([min_ic, min_ic, min_ic, min_ic, min_ic, 2*min_ic], device=device),
+                    'pde': torch.tensor([min_pde, min_pde, min_pde, min_pde, min_pde, 2*min_pde], device=device),
                     # inlet u, v, k, omega (all Dirichlet)
-                    'bc': torch.tensor([mini, mini, mini, mini,
+                    'bc': torch.tensor([min_bc, min_bc, min_bc, min_bc,
                                         # symmetry_u,v,p,k,omega (all Neumann),v_Dirichlet
-                                        mini, mini, mini, mini, mini, mini,
+                                        min_bc, min_bc, min_bc, min_bc, min_bc, min_bc,
                                         # out_p  wall_u,v,k (all Dirichlet)
-                                        mini, mini, mini, mini], device=device),
-                    'sparse': torch.tensor([maxi, maxi, maxi, maxi, maxi, maxi], device=device)
+                                        min_bc, min_bc, min_bc, min_bc], device=device),
+                    'sparse': torch.tensor([min_sparse, min_sparse, min_sparse,
+                    min_sparse, min_sparse, 2*min_sparse], device=device)
                 }
 
                 for key in ['ic', 'bc', 'pde', 'sparse']:
