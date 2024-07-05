@@ -14,7 +14,7 @@ from ml_collections import ConfigDict
 from torch.profiler import profile, record_function, ProfilerActivity
 import time
 import random
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 
 print('run J23 ------------------------- 1 ---------------------------------')
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -77,7 +77,7 @@ optim_config.clip_norm = 2000.0
 #optim_config.weight_decay = 1.0e-4
 
 N_intervals = 10
-t_start = 30
+t_start = 80
 
 N_log_metrics = 10
 N_loss_print = 10
@@ -637,13 +637,13 @@ def log_metrics(writer, tot_epoch, epoch, total_loss, ic_total_loss, bc_total_lo
         for interval in range(10):
             # bc markers
             ax.scatter([x_bc[interval]]*14, temporal_weights['bc'][interval].cpu().detach().numpy(),
-                       color='green', marker='^', edgecolors='black', label='bc' if interval == 0 else "")
+                       color='#0072B2', marker='^', edgecolors='black', label='bc' if interval == 0 else "")
             # pde markers
             ax.scatter([x_pde[interval]]*6, temporal_weights['pde'][interval].cpu().detach().numpy(),
-                       color='red', marker='o', edgecolors='black', label='pde' if interval == 0 else "")
+                       color='#D55E00', marker='o', edgecolors='black', label='pde' if interval == 0 else "")
             # sparse markers
             ax.scatter([x_sparse[interval]]*6, temporal_weights['sparse'][interval].cpu().detach().numpy(),
-                       color='pink', marker='s', edgecolors='black', label='sparse' if interval == 0 else "")
+                       color='#CC79A7', marker='s', edgecolors='black', label='sparse' if interval == 0 else "")
         # Add titles and labels
         ax.set_title('Temporal Weights')
         ax.set_xlabel('Intervals')
@@ -933,7 +933,7 @@ def main():
     criterion = nn.MSELoss().cuda()
     model = PINN().to(device)
 
-    model.load_state_dict(torch.load(f'../models/c35_21_30.pth'))
+    model.load_state_dict(torch.load(f'../models/c35_71_80.pth'))
 
     optimizer = optim.Adam(
         model.parameters(),

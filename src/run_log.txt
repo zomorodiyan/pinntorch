@@ -1,1 +1,5 @@
-July_5th_1412, code35_10i.py, refactor + reduced all_normalized_weights[pde_k_tr, pde_conv_diff] 10 times
+July_5th_1400, code35_10i.py, refactor + reduced all_normalized_weights[pde_k_tr, pde_conv_diff] 10 times
+run 31_40 for 2.5K
+run 41_50 for 2.5k
+run 81_90 for 2.5k
+
