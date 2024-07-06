@@ -14,7 +14,7 @@ from ml_collections import ConfigDict
 from torch.profiler import profile, record_function, ProfilerActivity
 import time
 import random
-os.environ["CUDA_VISIBLE_DEVICES"] = "2"
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
 print('run J23 ------------------------- 1 ---------------------------------')
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -479,13 +479,13 @@ all_ones_weights = {
 all_normalized_weights = {
     'pde': torch.tensor([0.2, 0.1, 0.1, 100.0, 0.001, 1e8], device=device),
     # inlet u, v, k, omega (all Dirichlet)
-    'bc': torch.tensor([0.2, 1.0, 1.0, 0.01,
+    'bc': torch.tensor([0.2, 1.0, 1.0, 0.001,
                         # symmetry_u,v,p,k,omega (all Neumann),v_Dirichlet
                         0.2, 0.2, 0.2, 10, 0.01, 0.2,
                         # out_p  wall_u,v,k (all Dirichlet)
-                        0.1, 0.2, 0.1, 1000.0], device=device),
-    'ic': torch.tensor([0.2, 0.2, 0.2, 1000, 0.01, 1e10], device=device),
-    'sparse': torch.tensor([0.2, 0.2, 0.2, 1000, 0.01, 1e10], device=device)
+                        0.1, 2.0, 2.0, 100.0], device=device),
+    'ic': torch.tensor([0.2, 0.2, 0.2, 100, 0.01, 1e10], device=device),
+    'sparse': torch.tensor([0.2, 0.2, 0.2, 100, 0.01, 1e10], device=device)
 }
 
 def bc_calc_loss(model, boundary_conditions, criterion):
@@ -590,13 +590,14 @@ def log_metrics(writer, tot_epoch, epoch, total_loss, ic_total_loss, bc_total_lo
     grad_norm = sum(p.grad.norm() for p in model.parameters() if p.grad is not None)
 
     bc_names = [
-        'inlet_u', 'inlet_v', 'inlet_k', 'inlet_omega',
-        'symmetry_u', 'symmetry_v', 'symmetry_p', 'symmetry_k', 'symmetry_omega',
-        'symmetry_v_dirichlet', 'outlet_p', 'wall_u', 'wall_v', 'wall_k' ]
+        'in_u', 'in_v', 'in_k', 'in_omega',
+        'symm_u', 'symm_v', 'symm_p', 'symm_k', 'symm_omega',
+        'symm_v_D', 'out_p', 'wall_u', 'wall_v', 'wall_k' ]
+    bc_group_names = [ 'inlet', 'symmetry', 'outlet', 'wall']
     ic_names = ['u', 'v', 'p', 'k', 'omega', 'c']
     sparse_names = ['u', 'v', 'p', 'k', 'omega', 'c']
-    pde_names = ['continuity', 'x_momentum', 'y_momentum', 'k_transport',
-                      'omega_transport', 'convection_diffusion']
+    pde_names = ['continuity', 'x_momentum', 'y_momentum', 'k_tran',
+                      'omega_tran', 'conv_diff']
 
     writer.add_scalar('Memory/Allocated', allocated_memory, tot_epoch)
     writer.add_scalar('Memory/Reserved', reserved_memory, tot_epoch)
@@ -629,32 +630,59 @@ def log_metrics(writer, tot_epoch, epoch, total_loss, ic_total_loss, bc_total_lo
 
     # Log temporal weights
     if epoch % N_plot_tweight == 0:
+        specified_colors = ['#E57373', '#FFB74D', '#BA68C8', '#64B5F6', '#4DB6AC', '#A9A9A9']
+        def get_bc_color(index):
+            if index < 4:
+                return specified_colors[0]
+            elif index < 10:
+                return specified_colors[1]
+            elif index == 10:
+                return specified_colors[2]
+            else:
+                return specified_colors[3]
+
         # Create a logarithmic plot
         fig, ax = plt.subplots(figsize=(10, 6))
         ax.set_yscale('log')
+
         # generate for x_axis
         eps2 = 0.2
-        x_bc = np.array([i for i in range(10)])-eps2
+        x_bc = np.array([i for i in range(10)]) - eps2
         x_pde = np.array([i for i in range(10)])
-        x_sparse = np.array([i for i in range(10)])+eps2
+        x_sparse = np.array([i for i in range(10)]) + eps2
+
         for interval in range(10):
             # bc markers
-            ax.scatter([x_bc[interval]]*14, temporal_weights['bc'][interval].cpu().detach().numpy(),
-                       color='#4169E1', marker='^', edgecolors='black', label='bc' if interval == 0 else "")
+            for i in range(14):
+                color_index = i // 4 if i < 11 else 3  # Divide elements into 4, 6, 1, 3 groups
+                ax.scatter([x_bc[interval]], temporal_weights['bc'][interval][i].cpu().detach().numpy(),
+                  color=specified_colors[color_index % len(specified_colors)],\
+                    marker='^', edgecolors='black', label=f'bc_{bc_group_names[color_index]}'\
+                      if interval == 0 and i % 4 == 0 else "")
+
             # pde markers
-            ax.scatter([x_pde[interval]]*6, temporal_weights['pde'][interval].cpu().detach().numpy(),
-                       color='#FFA500', marker='o', edgecolors='black', label='pde' if interval == 0 else "")
+            for i in range(6):
+                ax.scatter([x_pde[interval]], temporal_weights['pde'][interval][i].cpu().detach().numpy(),
+                  color=specified_colors[i % len(specified_colors)], marker='o',\
+                    edgecolors='black', label=f'{pde_names[i]}' if interval == 0 else "")
+
             # sparse markers
-            ax.scatter([x_sparse[interval]]*6, temporal_weights['sparse'][interval].cpu().detach().numpy(),
-                       color='#DC143C', marker='s', edgecolors='black', label='sparse' if interval == 0 else "")
+            for i in range(6):
+                ax.scatter([x_sparse[interval]], temporal_weights['sparse'][interval][i].cpu().detach().numpy(),
+                  color=specified_colors[i % len(specified_colors)], marker='s',\
+                    edgecolors='black', label=f'sparse_{sparse_names[i]}' if interval == 0 else "")
+
         # Add titles and labels
-        ax.set_title('Temporal Weights')
+        ax.set_title(f'Temporal Weights from {t_start+1}s to {t_start+10}s')
         ax.set_xlabel('Intervals')
         ax.set_ylabel('Temporal Weights (log scale)')
         ax.set_xticks(x_pde)  # Ensure all integers from 1 to 10 are included on the x-axis
-        ax.legend()
+        handles, labels = ax.get_legend_handles_labels()
+        by_label = dict(zip(labels, handles))
+        ax.legend(by_label.values(), by_label.keys(), ncol=2)  # Set the legend to have two columns
 
         writer.add_figure('t_weights_epoch{epoch}', fig, epoch)
+
 
     if epoch == 1000:
 # --- actuals ----------------------------------------------------------------
@@ -936,7 +964,7 @@ def main():
     criterion = nn.MSELoss().cuda()
     model = PINN().to(device)
 
-    model.load_state_dict(torch.load(f'../models/c35_81_90.pth'))
+    model.load_state_dict(torch.load(f'../models/c35_91_100.pth'))
 
     optimizer = optim.Adam(
         model.parameters(),
@@ -945,7 +973,7 @@ def main():
         eps=optim_config.eps,
     )
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=optim_config.decay_steps, gamma=optim_config.decay_rate)
-    writer = SummaryWriter(log_dir=f'../runs/c35_{t_start+1}_{t_start+10}')
+    writer = SummaryWriter(log_dir=f'../runs/c35_{t_start+1}_{t_start+10}_colors')
 
     weights = {
         'bc': torch.ones(14, device=device),
@@ -1090,13 +1118,13 @@ def main():
                 min_pde = 1.0
                 min_weights = {
                     'ic': torch.tensor([min_ic, min_ic, min_ic, min_ic, min_ic, 2*min_ic], device=device),
-                    'pde': torch.tensor([min_pde, min_pde, min_pde, min_pde, min_pde, 2*min_pde], device=device),
+                    'pde': torch.tensor([min_pde, min_pde, min_pde, 5*min_pde, 5*min_pde, 2*min_pde], device=device),
                     # inlet u, v, k, omega (all Dirichlet)
                     'bc': torch.tensor([min_bc, min_bc, min_bc, min_bc,
                                         # symmetry_u,v,p,k,omega (all Neumann),v_Dirichlet
                                         min_bc, min_bc, min_bc, min_bc, min_bc, min_bc,
                                         # out_p  wall_u,v,k (all Dirichlet)
-                                        min_bc, min_bc, min_bc, min_bc], device=device),
+                                        min_bc, 5*min_bc, 5*min_bc, 5*min_bc], device=device),
                     'sparse': torch.tensor([min_sparse, min_sparse, min_sparse,
                     min_sparse, min_sparse, 2*min_sparse], device=device)
                 }
