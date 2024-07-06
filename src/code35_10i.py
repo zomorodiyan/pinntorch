@@ -77,7 +77,7 @@ optim_config.clip_norm = 2000.0
 #optim_config.weight_decay = 1.0e-4
 
 N_intervals = 10
-t_start = 80
+t_start = 90
 
 N_log_metrics = 10
 N_loss_print = 10
@@ -275,8 +275,8 @@ def pde_residuals(model, x, y, t, Re, theta):
     c = c.view(-1, 1)
 
     # Clamping k and omega to avoid negative values and extreme values
-#   k = torch.clamp(k, min=1e-10, max=1e6)
-#   omega = torch.clamp(omega, min=1e-6, max=1e6)
+    k = torch.clamp(k, min=1e-12, max=1e6)
+    omega = torch.clamp(omega, min=1e-12, max=1e6)
 
     # Compute first-order derivatives
     u_x = torch.autograd.grad(u, x, grad_outputs=torch.ones_like(u), create_graph=True)[0]
@@ -299,7 +299,7 @@ def pde_residuals(model, x, y, t, Re, theta):
     c_xx = torch.autograd.grad(c_x, x, grad_outputs=torch.ones_like(c), create_graph=True)[0]
     c_yy = torch.autograd.grad(c_y, y, grad_outputs=torch.ones_like(c), create_graph=True)[0]
 
-    y_hat = safe_sqrt(x ** 2 + y ** 2) - 40 / L_star  # non-dim(distance) - radius/L_star
+    y_hat = safe_sqrt(x ** 2 + y ** 2) - 40 / L_star  # non-dim(distance) - non-dim(radius)
     D_omega_plus = smooth_maximum((2 / (sigma_omega2 * omega)) * (k_x * omega_x + k_y * omega_y), torch.tensor(1e-10, device=x.device))
 
     eps = 1e-6
@@ -312,13 +312,13 @@ def pde_residuals(model, x, y, t, Re, theta):
     phi_2 = smooth_maximum(phi_21, phi_22)
 
     # Clamping intermediate terms to avoid extreme values
-#   phi_11 = torch.clamp(phi_11, min=-1e10, max=1e6)
-#   phi_12 = torch.clamp(phi_12, min=-1e10, max=1e6)
-#   phi_13 = torch.clamp(phi_13, min=-1e10, max=1e6)
-#   phi_1 = torch.clamp(phi_1, min=-1e10, max=1e6)
-#   phi_21 = torch.clamp(phi_21, min=-1e10, max=1e6)
-#   phi_22 = torch.clamp(phi_22, min=-1e10, max=1e6)
-#   phi_2 = torch.clamp(phi_2, min=-1e10, max=1e6)
+    phi_11 = torch.clamp(phi_11, min=-1e12, max=1e6)
+    phi_12 = torch.clamp(phi_12, min=-1e12, max=1e6)
+    phi_13 = torch.clamp(phi_13, min=-1e12, max=1e6)
+    phi_1 = torch.clamp(phi_1, min=-1e12, max=1e6)
+    phi_21 = torch.clamp(phi_21, min=-1e12, max=1e6)
+    phi_22 = torch.clamp(phi_22, min=-1e12, max=1e6)
+    phi_2 = torch.clamp(phi_2, min=-1e12, max=1e6)
 
     dummy_1 = torch.autograd.grad(safe_sqrt(k), y, grad_outputs=torch.ones_like(k), create_graph=True)[0]
 
@@ -344,7 +344,7 @@ def pde_residuals(model, x, y, t, Re, theta):
     S = safe_sqrt(2 * ((u_x) ** 2 + (v_y) ** 2 + 0.5 * (u_y + v_x) ** 2))
 
     mu_t = k / omega * (1 / smooth_maximum(1 / alpha_star, S * F2 / (a1 * omega)))
-#   mu_t = torch.clamp(mu_t, min=1e-10, max=1e6)
+    mu_t = torch.clamp(mu_t, min=1e-12, max=1e6)
 
     G_k = mu_t * S ** 2
     Y_k = beta_star * k * omega
@@ -372,11 +372,11 @@ def pde_residuals(model, x, y, t, Re, theta):
     omega_transport_term1 = torch.autograd.grad((1 / Re + mu_t / sigma_omega) * omega_x, x, grad_outputs=torch.ones_like(omega_x), create_graph=True)[0]
     omega_transport_term2 = torch.autograd.grad((1 / Re + mu_t / sigma_omega) * omega_y, y, grad_outputs=torch.ones_like(omega_y), create_graph=True)[0]
 
-#   omega_transport_term1 = torch.clamp(omega_transport_term1, min=-10.0, max=10.0)
-#   omega_transport_term2 = torch.clamp(omega_transport_term2, min=-10.0, max=10.0)
-#   G_omega = torch.clamp(G_omega, min=-10.0, max=10.0)
-#   Y_omega = torch.clamp(Y_omega, min=-10.0, max=10.0)
-#   D_omega = torch.clamp(D_omega, min=-10.0, max=10.0)
+    omega_transport_term1 = torch.clamp(omega_transport_term1, min=-10.0, max=10.0)
+    omega_transport_term2 = torch.clamp(omega_transport_term2, min=-10.0, max=10.0)
+    G_omega = torch.clamp(G_omega, min=-10.0, max=10.0)
+    Y_omega = torch.clamp(Y_omega, min=-10.0, max=10.0)
+    D_omega = torch.clamp(D_omega, min=-10.0, max=10.0)
 
     omega_residual = omega_t + u * omega_x + v * omega_y - omega_transport_term1 - omega_transport_term2 - G_omega + Y_omega - D_omega
     D_t =  1/Re + (1/Re + mu_t)/(0.803)
@@ -640,13 +640,13 @@ def log_metrics(writer, tot_epoch, epoch, total_loss, ic_total_loss, bc_total_lo
         for interval in range(10):
             # bc markers
             ax.scatter([x_bc[interval]]*14, temporal_weights['bc'][interval].cpu().detach().numpy(),
-                       color='#0072B2', marker='^', edgecolors='black', label='bc' if interval == 0 else "")
+                       color='#4169E1', marker='^', edgecolors='black', label='bc' if interval == 0 else "")
             # pde markers
             ax.scatter([x_pde[interval]]*6, temporal_weights['pde'][interval].cpu().detach().numpy(),
-                       color='#D55E00', marker='o', edgecolors='black', label='pde' if interval == 0 else "")
+                       color='#FFA500', marker='o', edgecolors='black', label='pde' if interval == 0 else "")
             # sparse markers
             ax.scatter([x_sparse[interval]]*6, temporal_weights['sparse'][interval].cpu().detach().numpy(),
-                       color='#CC79A7', marker='s', edgecolors='black', label='sparse' if interval == 0 else "")
+                       color='#DC143C', marker='s', edgecolors='black', label='sparse' if interval == 0 else "")
         # Add titles and labels
         ax.set_title('Temporal Weights')
         ax.set_xlabel('Intervals')
@@ -936,7 +936,7 @@ def main():
     criterion = nn.MSELoss().cuda()
     model = PINN().to(device)
 
-    model.load_state_dict(torch.load(f'../models/c35_71_80.pth'))
+    model.load_state_dict(torch.load(f'../models/c35_81_90.pth'))
 
     optimizer = optim.Adam(
         model.parameters(),
