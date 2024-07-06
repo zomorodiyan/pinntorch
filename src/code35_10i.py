@@ -275,8 +275,8 @@ def pde_residuals(model, x, y, t, Re, theta):
     c = c.view(-1, 1)
 
     # Clamping k and omega to avoid negative values and extreme values
-    k = torch.clamp(k, min=1e-10, max=1e6)
-    omega = torch.clamp(omega, min=1e-6, max=1e6)
+#   k = torch.clamp(k, min=1e-10, max=1e6)
+#   omega = torch.clamp(omega, min=1e-6, max=1e6)
 
     # Compute first-order derivatives
     u_x = torch.autograd.grad(u, x, grad_outputs=torch.ones_like(u), create_graph=True)[0]
@@ -312,13 +312,13 @@ def pde_residuals(model, x, y, t, Re, theta):
     phi_2 = smooth_maximum(phi_21, phi_22)
 
     # Clamping intermediate terms to avoid extreme values
-    phi_11 = torch.clamp(phi_11, min=-1e10, max=1e6)
-    phi_12 = torch.clamp(phi_12, min=-1e10, max=1e6)
-    phi_13 = torch.clamp(phi_13, min=-1e10, max=1e6)
-    phi_1 = torch.clamp(phi_1, min=-1e10, max=1e6)
-    phi_21 = torch.clamp(phi_21, min=-1e10, max=1e6)
-    phi_22 = torch.clamp(phi_22, min=-1e10, max=1e6)
-    phi_2 = torch.clamp(phi_2, min=-1e10, max=1e6)
+#   phi_11 = torch.clamp(phi_11, min=-1e10, max=1e6)
+#   phi_12 = torch.clamp(phi_12, min=-1e10, max=1e6)
+#   phi_13 = torch.clamp(phi_13, min=-1e10, max=1e6)
+#   phi_1 = torch.clamp(phi_1, min=-1e10, max=1e6)
+#   phi_21 = torch.clamp(phi_21, min=-1e10, max=1e6)
+#   phi_22 = torch.clamp(phi_22, min=-1e10, max=1e6)
+#   phi_2 = torch.clamp(phi_2, min=-1e10, max=1e6)
 
     dummy_1 = torch.autograd.grad(safe_sqrt(k), y, grad_outputs=torch.ones_like(k), create_graph=True)[0]
 
@@ -344,7 +344,7 @@ def pde_residuals(model, x, y, t, Re, theta):
     S = safe_sqrt(2 * ((u_x) ** 2 + (v_y) ** 2 + 0.5 * (u_y + v_x) ** 2))
 
     mu_t = k / omega * (1 / smooth_maximum(1 / alpha_star, S * F2 / (a1 * omega)))
-    mu_t = torch.clamp(mu_t, min=1e-10, max=1e6)
+#   mu_t = torch.clamp(mu_t, min=1e-10, max=1e6)
 
     G_k = mu_t * S ** 2
     Y_k = beta_star * k * omega
@@ -372,15 +372,18 @@ def pde_residuals(model, x, y, t, Re, theta):
     omega_transport_term1 = torch.autograd.grad((1 / Re + mu_t / sigma_omega) * omega_x, x, grad_outputs=torch.ones_like(omega_x), create_graph=True)[0]
     omega_transport_term2 = torch.autograd.grad((1 / Re + mu_t / sigma_omega) * omega_y, y, grad_outputs=torch.ones_like(omega_y), create_graph=True)[0]
 
-    omega_transport_term1 = torch.clamp(omega_transport_term1, min=-10.0, max=10.0)
-    omega_transport_term2 = torch.clamp(omega_transport_term2, min=-10.0, max=10.0)
-    G_omega = torch.clamp(G_omega, min=-10.0, max=10.0)
-    Y_omega = torch.clamp(Y_omega, min=-10.0, max=10.0)
-    D_omega = torch.clamp(D_omega, min=-10.0, max=10.0)
+#   omega_transport_term1 = torch.clamp(omega_transport_term1, min=-10.0, max=10.0)
+#   omega_transport_term2 = torch.clamp(omega_transport_term2, min=-10.0, max=10.0)
+#   G_omega = torch.clamp(G_omega, min=-10.0, max=10.0)
+#   Y_omega = torch.clamp(Y_omega, min=-10.0, max=10.0)
+#   D_omega = torch.clamp(D_omega, min=-10.0, max=10.0)
 
     omega_residual = omega_t + u * omega_x + v * omega_y - omega_transport_term1 - omega_transport_term2 - G_omega + Y_omega - D_omega
-    D_t =  mu/rho + (mu + mu_t)/(rho*0.803)
-    c_residual = c_t + u * c_x + v * c_y - (D_t / L_star / U_star) * (c_xx + c_yy)  # Convection-diffusion equation
+    D_t =  1/Re + (1/Re + mu_t)/(0.803)
+    c_residual_term1 = torch.autograd.grad(D_t*c_x-u*c, x, grad_outputs=torch.ones_like(c_x), create_graph=True)[0]
+    c_residual_term2 = torch.autograd.grad(D_t*c_y-v*c, y, grad_outputs=torch.ones_like(c_y), create_graph=True)[0]
+
+    c_residual = c_t - c_residual_term1 - c_residual_term2
 
     pde_check_list = {
         'x': x,
