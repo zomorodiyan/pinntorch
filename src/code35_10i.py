@@ -77,7 +77,7 @@ optim_config.clip_norm = 2000.0
 #optim_config.weight_decay = 1.0e-4
 
 N_intervals = 10
-t_start = 90
+t_start = 50
 
 N_log_metrics = 10
 N_loss_print = 10
@@ -148,8 +148,8 @@ def generate_boundary_conditions(interval, num_samples):
     theta_wall = theta_values[torch.randint(len(theta_values), x_wall.size(), device=device)].float()
     inputs_wall = (x_wall, y_wall, t_wall, Re_wall, theta_wall)
     conditions_wall = {
-        'u': {'type': 'Dirichlet', 'value': torch.zeros_like(x_wall).float().to(device)},
-        'v': {'type': 'Dirichlet', 'value': torch.zeros_like(x_wall).float().to(device)},
+#       'u': {'type': 'Dirichlet', 'value': torch.zeros_like(x_wall).float().to(device)},
+#       'v': {'type': 'Dirichlet', 'value': torch.zeros_like(x_wall).float().to(device)},
         'k': {'type': 'Dirichlet', 'value': torch.zeros_like(x_wall).float().to(device)}
     }
 
@@ -471,19 +471,19 @@ def pde_residuals(model, x, y, t, Re, theta):
 
 all_ones_weights = {
         'pde': torch.tensor([1.0] * 6, device=device),
-        'bc': torch.tensor([1.0] * 14, device=device),
+        'bc': torch.tensor([1.0] * 12, device=device),
         'ic': torch.tensor([1.0] * 6, device=device),
         'sparse': torch.tensor([1.0] * 6, device=device)
     }
 
 all_normalized_weights = {
-    'pde': torch.tensor([0.2, 0.1, 0.1, 100.0, 0.001, 1e8], device=device),
+    'pde': torch.tensor([0.2, 0.1, 0.1, 100.0, 0.0001, 1e8], device=device),
     # inlet u, v, k, omega (all Dirichlet)
     'bc': torch.tensor([0.2, 1.0, 1.0, 0.001,
                         # symmetry_u,v,p,k,omega (all Neumann),v_Dirichlet
                         0.2, 0.2, 0.2, 10, 0.01, 0.2,
-                        # out_p  wall_u,v,k (all Dirichlet)
-                        0.1, 2.0, 2.0, 100.0], device=device),
+                        # out_p  wall_k (all Dirichlet)
+                        0.1, 100.0], device=device),
     'ic': torch.tensor([0.2, 0.2, 0.2, 100, 0.01, 1e10], device=device),
     'sparse': torch.tensor([0.2, 0.2, 0.2, 100, 0.01, 1e10], device=device)
 }
@@ -590,14 +590,14 @@ def log_metrics(writer, tot_epoch, epoch, total_loss, ic_total_loss, bc_total_lo
     grad_norm = sum(p.grad.norm() for p in model.parameters() if p.grad is not None)
 
     bc_names = [
-        'in_u', 'in_v', 'in_k', 'in_omega',
-        'symm_u', 'symm_v', 'symm_p', 'symm_k', 'symm_omega',
-        'symm_v_D', 'out_p', 'wall_u', 'wall_v', 'wall_k' ]
+        'in_u', 'in_v', 'in_k', 'in_$\omega$',
+        'symm_u', 'symm_v', 'symm_p', 'symm_k', 'symm_$\omega$',
+        'symm_v_D', 'out_p','wall_k' ]
     bc_group_names = [ 'inlet', 'symmetry', 'outlet', 'wall']
-    ic_names = ['u', 'v', 'p', 'k', 'omega', 'c']
-    sparse_names = ['u', 'v', 'p', 'k', 'omega', 'c']
-    pde_names = ['continuity', 'x_momentum', 'y_momentum', 'k_tran',
-                      'omega_tran', 'conv_diff']
+    ic_names = ['u', 'v', 'p', 'k', '$\omega$', 'c']
+    sparse_names = ['u', 'v', 'p', 'k', '$\omega$', 'c']
+    pde_names = ['continuity', 'x_momentum', 'y_momentum', 'k_transport',
+                      '$\omega$_transprt', 'conv_diff']
 
     writer.add_scalar('Memory/Allocated', allocated_memory, tot_epoch)
     writer.add_scalar('Memory/Reserved', reserved_memory, tot_epoch)
@@ -653,12 +653,18 @@ def log_metrics(writer, tot_epoch, epoch, total_loss, ic_total_loss, bc_total_lo
 
         for interval in range(10):
             # bc markers
-            for i in range(14):
-                color_index = i // 4 if i < 11 else 3  # Divide elements into 4, 6, 1, 3 groups
+            for i in range(12):
+                if i <= 3:
+                    color_index = 0
+                elif 4 <= i <= 9:
+                    color_index = 1
+                elif i == 10:
+                    color_index = 2
+                else:
+                    color_index = 3
                 ax.scatter([x_bc[interval]], temporal_weights['bc'][interval][i].cpu().detach().numpy(),
                   color=specified_colors[color_index % len(specified_colors)],\
-                    marker='^', edgecolors='black', label=f'bc_{bc_group_names[color_index]}'\
-                      if interval == 0 and i % 4 == 0 else "")
+                    marker='^', edgecolors='black', label=f'bc_{bc_group_names[color_index]}' if interval == 0 and i in {0,4,10,11} else "")
 
             # pde markers
             for i in range(6):
@@ -679,10 +685,9 @@ def log_metrics(writer, tot_epoch, epoch, total_loss, ic_total_loss, bc_total_lo
         ax.set_xticks(x_pde)  # Ensure all integers from 1 to 10 are included on the x-axis
         handles, labels = ax.get_legend_handles_labels()
         by_label = dict(zip(labels, handles))
-        ax.legend(by_label.values(), by_label.keys(), ncol=2)  # Set the legend to have two columns
+        ax.legend(by_label.values(), by_label.keys(), ncol=2)  # Set legend to two columns
 
         writer.add_figure('t_weights_epoch{epoch}', fig, epoch)
-
 
     if epoch == 1000:
 # --- actuals ----------------------------------------------------------------
@@ -964,7 +969,7 @@ def main():
     criterion = nn.MSELoss().cuda()
     model = PINN().to(device)
 
-    model.load_state_dict(torch.load(f'../models/c35_91_100.pth'))
+    model.load_state_dict(torch.load(f'../models/c35_{t_start+1+10}_{t_start+10+10}.pth'))
 
     optimizer = optim.Adam(
         model.parameters(),
@@ -973,10 +978,10 @@ def main():
         eps=optim_config.eps,
     )
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=optim_config.decay_steps, gamma=optim_config.decay_rate)
-    writer = SummaryWriter(log_dir=f'../runs/c35_{t_start+1}_{t_start+10}_colors')
+    writer = SummaryWriter(log_dir=f'../runs/c35_{t_start+1}_{t_start+10}_j6')
 
     weights = {
-        'bc': torch.ones(14, device=device),
+        'bc': torch.ones(12, device=device),
         'ic': torch.ones(6, device=device),
         'pde': torch.ones(6, device=device),
         'sparse': torch.ones(6, device=device)
@@ -1008,7 +1013,7 @@ def main():
 
             num_intervals = 10
             num_components_pde = 6
-            num_components_bc = 14
+            num_components_bc = 12
             num_components_sparse = 6
 
 # Initialize lists to temporarily store losses
@@ -1082,7 +1087,7 @@ def main():
 
             normalized_raw_losses = {
                 'ic': [all_normalized_weights['ic'][i] * raw_ic_losses[i]for i in range(6)],
-                'bc': [all_normalized_weights['bc'][i] * sum_temporal_weighted_losses['bc'][i] for i in range(14)],
+                'bc': [all_normalized_weights['bc'][i] * sum_temporal_weighted_losses['bc'][i] for i in range(12)],
                 'sparse': [all_normalized_weights['sparse'][i] * sum_temporal_weighted_losses['sparse'][i] for i in range(6)],
                 'pde': [all_normalized_weights['pde'][i] * sum_temporal_weighted_losses['pde'][i] for i in range(6)],
             }
@@ -1109,7 +1114,7 @@ def main():
                     'ic': torch.zeros(6, device=device),
                     'pde': torch.zeros(6, device=device),
                     'sparse': torch.zeros(6, device=device),
-                    'bc': torch.zeros(14, device=device)
+                    'bc': torch.zeros(12, device=device)
                 }
 
                 min_bc = 1.0
@@ -1118,13 +1123,13 @@ def main():
                 min_pde = 1.0
                 min_weights = {
                     'ic': torch.tensor([min_ic, min_ic, min_ic, min_ic, min_ic, 2*min_ic], device=device),
-                    'pde': torch.tensor([min_pde, min_pde, min_pde, 5*min_pde, 5*min_pde, 2*min_pde], device=device),
+                    'pde': torch.tensor([min_pde, min_pde, min_pde, 5*min_pde, 50*min_pde, 50*min_pde], device=device),
                     # inlet u, v, k, omega (all Dirichlet)
                     'bc': torch.tensor([min_bc, min_bc, min_bc, min_bc,
                                         # symmetry_u,v,p,k,omega (all Neumann),v_Dirichlet
                                         min_bc, min_bc, min_bc, min_bc, min_bc, min_bc,
                                         # out_p  wall_u,v,k (all Dirichlet)
-                                        min_bc, 5*min_bc, 5*min_bc, 5*min_bc], device=device),
+                                        min_bc, 5*min_bc], device=device),
                     'sparse': torch.tensor([min_sparse, min_sparse, min_sparse,
                     min_sparse, min_sparse, 2*min_sparse], device=device)
                 }
@@ -1148,7 +1153,7 @@ def main():
 
                 for key in ['ic', 'bc', 'pde', 'sparse']:
                     weight_update = []
-                    eps_1 = 1e-10
+                    eps_1 = 1e-6
                     for i, (grad, weight) in enumerate(zip(gradient_norms[key], weights[key])):
                         if weight != 0:
                             updated_weight = total_norm / max(grad, eps_1)
@@ -1169,7 +1174,7 @@ def main():
                     weight_update = torch.max(weight_update, min_weights[key])
                     weight_update = torch.clamp(weight_update, max=max_weight)
 
-                    alpha_ = 0.1
+                    alpha_ = 0.5
                     weights[key] = alpha_ * weights[key] + (1 - alpha_) * weight_update
                     print(f"weights[{key}]:", [f"{weights[key][i].item():.1f}" for i in range(len(weights[key]))])
 
@@ -1195,7 +1200,7 @@ def main():
                 log_metrics(writer, tot_epoch, epoch, total_loss, ic_total_loss,
                             bc_total_loss, sparse_total_loss, pde_total_loss,
                             [normalized_raw_losses['ic'][i].item() for i in range(6)],
-                            [normalized_raw_losses['bc'][i].item() for i in range(14)],
+                            [normalized_raw_losses['bc'][i].item() for i in range(12)],
                             [normalized_raw_losses['sparse'][i].item() for i in range(6)],
                             [normalized_raw_losses['pde'][i].item() for i in range(6)],
                             weights, temporal_weights, model, dataset, scheduler.get_last_lr()[0])
