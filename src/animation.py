@@ -1,4 +1,5 @@
 import torch
+import time
 from PIL import Image
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
@@ -10,8 +11,9 @@ import os
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
-model_files = [f'../models/c35_{i*10-9}_{i*10}.pth' for i in range(1, 11)]
+model_files = [f'../models/c35_{i*10+1}_{i*10+10}.pth' for i in range(10)]
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -106,7 +108,7 @@ def prepare_inputs_outputs(batch_data):
 class CustomDataset(Dataset):
     def __init__(self, data_array):
         self.data = torch.tensor(data_array, dtype=torch.float32).to(device)
-        self.elements_per_snapshot = 5*13001
+        self.elements_per_snapshot = 3*13001
         self.elements_per_simulation = 13001
 
     def get_plotting_data(self, snapshot, simulation):
@@ -122,7 +124,7 @@ def load_model(model_file):
     return model
 
 def plot_fields(x, y, u, v, p, k, omega, c, snapshot,
-              simulation,  name = 'new_fig', save_dir="../animations/figures", U_star = None):
+              simulation,  name = 'new_fig', save_dir="../animations", U_star = None):
     with torch.no_grad():
         L_star = 80.0
 
@@ -212,20 +214,20 @@ def create_animation(models, dataset, start_time, end_time, simulation,\
         # Plot the fields
 
 #       fig = plot_fields(x, y, torch.abs(u-u_.squeeze()), torch.abs(v-v_.squeeze()), torch.abs(p-p_.squeeze()), torch.abs(k-k_.squeeze()), torch.abs(omega-omega_.squeeze()), torch.abs(c-c_.squeeze()), time_step, simulation, name=f"fig_{time_step}", save_dir=save_dir, U_star = 9.0)
-#       fig = plot_fields(x, y, u, v, p, k, omega_, c_, time_step, simulation, name=f"fig_j6_{time_step}", save_dir=save_dir, U_star = 9.0)
+#       fig = plot_fields(x, y, u, v, p, k, omega_, c_, time_step, simulation, name=f"fig_j9_sim4_{time_step}", save_dir=save_dir, U_star = 9.0)
         fig = plot_fields(x, y, u_.squeeze(), v_.squeeze(), p_.squeeze(), k_.squeeze(), omega_.squeeze(), c_.squeeze(), time_step, simulation, name=f"fig_j6_{time_step}", save_dir=save_dir, U_star = 9.0)
         plt.close(fig)  # Close the figure to save memory
 
         # Save the figure as an image
-        image_path = os.path.join(save_dir, f"fig_{time_step}.png")
-        frames.append(image_path)
+#       image_path = os.path.join(save_dir, f"fig_{time_step}.png")
+#       frames.append(image_path)
 
     # Create the animation
 #   images = [Image.open(frame) for frame in frames]
 #   images[0].save(os.path.join(save_dir, filename), save_all=True, append_images=images[1:], duration=200, loop=0, optimize=False, quality=100)
 
 models = [load_model(model_file) for model_file in model_files]
-data_array = np.load("../data/preprocessed_clipped.npy")
+data_array = np.load("../data/training_3.npy")
 dataset = CustomDataset(data_array)
-create_animation(models, dataset, start_time=1, end_time=100, simulation=1)
+create_animation(models, dataset, start_time=1, end_time=100, simulation=2)
 #sim1: north_east_leak
