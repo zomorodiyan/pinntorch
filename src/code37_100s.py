@@ -1,4 +1,5 @@
 import os
+import gc
 os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
 import torch
 import torch.nn as nn
@@ -14,7 +15,7 @@ from ml_collections import ConfigDict
 from torch.profiler import profile, record_function, ProfilerActivity
 import time
 import random
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 
 print('run J23 ------------------------- 1 ---------------------------------')
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -73,7 +74,7 @@ optim_config.learning_rate = 1e-3
 optim_config.decay_rate = 0.9
 optim_config.decay_steps = 100
 optim_config.grad_accum_steps = 0
-optim_config.clip_norm = 2000.0
+optim_config.clip_norm = 1000.0
 #optim_config.weight_decay = 1.0e-4
 
 N_intervals = 25
@@ -83,10 +84,10 @@ N_log_metrics = 1
 N_loss_print = 1
 N_weight_update = 10
 N_plot_fields = 100
-N_plot_tweight = 100
+N_plot_tweight = 10
 N_save_model = 500
-N_plot_error = 250
-N_plot_residuals = 250
+N_plot_error = 15
+N_plot_residuals = 15
 
 def save_model(model, path):
     torch.save(model.state_dict(), path)
@@ -261,7 +262,8 @@ def safe_sqrt(tensor, epsilon=1e-16):
 
 # Define the PDE residuals for the SST k-omega model and convection-diffusion equation
 def pde_residuals(model, x, y, t, Re, theta):
-    U_star = mu_rho_l * Re
+
+    print(f'pde begin: {torch.cuda.memory_reserved() / 1024 ** 2}')
 
     x.requires_grad_(True)
     y.requires_grad_(True)
@@ -287,8 +289,10 @@ def pde_residuals(model, x, y, t, Re, theta):
     v_t = torch.autograd.grad(v, t, grad_outputs=torch.ones_like(v), create_graph=True)[0]
     p_x = torch.autograd.grad(p, x, grad_outputs=torch.ones_like(p), create_graph=True)[0]
     p_y = torch.autograd.grad(p, y, grad_outputs=torch.ones_like(p), create_graph=True)[0]
+
     del p
     torch.cuda.empty_cache()
+
     k_x = torch.autograd.grad(k, x, grad_outputs=torch.ones_like(k), create_graph=True)[0]
     k_y = torch.autograd.grad(k, y, grad_outputs=torch.ones_like(k), create_graph=True)[0]
     k_t = torch.autograd.grad(k, t, grad_outputs=torch.ones_like(k), create_graph=True)[0]
@@ -313,17 +317,6 @@ def pde_residuals(model, x, y, t, Re, theta):
     phi_22 = 500 / (Re * y_hat ** 2 * omega+eps)
     phi_2 = smooth_maximum(phi_21, phi_22)
 
-    # Clamping intermediate terms to avoid extreme values
-    phi_11 = torch.clamp(phi_11, min=-1e12, max=1e6)
-    phi_12 = torch.clamp(phi_12, min=-1e12, max=1e6)
-    phi_13 = torch.clamp(phi_13, min=-1e12, max=1e6)
-    phi_1 = torch.clamp(phi_1, min=-1e12, max=1e6)
-    phi_21 = torch.clamp(phi_21, min=-1e12, max=1e6)
-    phi_22 = torch.clamp(phi_22, min=-1e12, max=1e6)
-    phi_2 = torch.clamp(phi_2, min=-1e12, max=1e6)
-
-    dummy_1 = torch.autograd.grad(safe_sqrt(k), y, grad_outputs=torch.ones_like(k), create_graph=True)[0]
-
     F1 = torch.tanh(phi_1 ** 4)
     F2 = torch.tanh(phi_2)
     beta_i = F1 * beta_i1 + (1 - F1) * beta_i2
@@ -333,12 +326,18 @@ def pde_residuals(model, x, y, t, Re, theta):
     alpha_infinity = F1 * alpha_infinity_1 + (1 - F1) * alpha_infinity_2
 
     Re_t = k / (mu * omega)
+    Re_t = torch.clamp(Re_t, max=1e3)
+
     alpha_star = alpha_star_infinity * (alpha_star_0 + Re_t / R_k) / (1 + Re_t / R_k)
     alpha = (alpha_infinity / alpha_star) * ((alpha_0 + Re_t / R_omega) / (1 + Re_t / R_omega))
     beta_star_i = beta_star_infinity * ((4 / 15 + (Re_t / R_beta) ** 4) / (1 + (Re_t / R_beta) ** 4))
+    U_star = mu_rho_l * Re
     M_t = U_star * safe_sqrt(2 * k / (gamma * R * T))
-    F_Mt = smooth_conditional(M_t <= M_t0, torch.zeros_like(M_t), M_t ** 2 - M_t0 ** 2)
 
+    del U_star
+    torch.cuda.empty_cache()
+
+    F_Mt = smooth_conditional(M_t <= M_t0, torch.zeros_like(M_t), M_t ** 2 - M_t0 ** 2)
     beta_star = beta_star_i * (1 + xi_star * F_Mt)
     beta = beta_i * (1 - beta_star_i / beta_i * xi_star * F_Mt)
     sigma_k = 1 / (F1 / sigma_k1 + (1 - F1) / sigma_k2)
@@ -348,18 +347,25 @@ def pde_residuals(model, x, y, t, Re, theta):
     mu_t = k / omega * (1 / smooth_maximum(1 / alpha_star, S * F2 / (a1 * omega)))
     mu_t = torch.clamp(mu_t, min=1e-12, max=1e6)
 
-    del c_xx, c_yy, y_hat, D_omega_plus, phi_11, phi_12, phi_13, phi_1, phi_21, phi_22, phi_2, dummy_1, F2, beta_i, alpha_star_0, alpha_infinity_1, alpha_infinity_2, alpha_infinity, Re_t, alpha_star, beta_star_i, M_t, F_Mt
+    del c_xx, c_yy, y_hat, D_omega_plus, phi_11, phi_12, phi_13, phi_1, phi_21, phi_22, phi_2, F2, beta_i, alpha_star_0, alpha_infinity_1, alpha_infinity_2, alpha_infinity, Re_t, alpha_star, beta_star_i, M_t, F_Mt
     torch.cuda.empty_cache()
+
     G_k = mu_t * S ** 2
+
     Y_k = beta_star * k * omega
     G_k_tilde = smooth_minimum(G_k, 10 * beta_star * k * omega)
+
     del S, beta_star
     torch.cuda.empty_cache()
+
     G_omega = alpha / mu_t * G_k_tilde
+
     del alpha
     torch.cuda.empty_cache()
+
     Y_omega = beta * omega ** 2
     D_omega = 2 * (1 - F1) * (sigma_omega2 / omega) * (k_x * omega_x + k_y * omega_y)
+
     del F1, omega, k, beta
     torch.cuda.empty_cache()
 
@@ -373,7 +379,6 @@ def pde_residuals(model, x, y, t, Re, theta):
     y_mom_gradx = torch.autograd.grad((1/Re + mu_t) * (v_x + u_y), x, grad_outputs=torch.ones_like(v_y), create_graph=True)[0]
     y_momentum_residual = v_t + u * v_x + v * v_y + p_y - y_mom_grady - y_mom_gradx
 
-
     del v_x, v_y, v_t, u_x, u_y, u_t, p_x, p_y
     torch.cuda.empty_cache()
 
@@ -384,31 +389,33 @@ def pde_residuals(model, x, y, t, Re, theta):
 
     k_residual = k_t + u * k_x + v * k_y - k_transport_term1 - k_transport_term2 - G_k + Y_k
 
-    del k_x, k_y, k_t
+    del k_transport_term1, k_transport_term2, k_x, k_y, k_t
     torch.cuda.empty_cache()
 
-    omega_transport_term1 = torch.autograd.grad((1 / Re + mu_t / sigma_omega) * omega_x, x, grad_outputs=torch.ones_like(omega_x), create_graph=True)[0]
-    omega_transport_term2 = torch.autograd.grad((1 / Re + mu_t / sigma_omega) * omega_y, y, grad_outputs=torch.ones_like(omega_y), create_graph=True)[0]
+    omega_term1 = torch.autograd.grad((1 / Re + mu_t / sigma_omega) * omega_x, x, grad_outputs=torch.ones_like(omega_x), create_graph=True)[0]
+    omega_term2 = torch.autograd.grad((1 / Re + mu_t / sigma_omega) * omega_y, y, grad_outputs=torch.ones_like(omega_y), create_graph=True)[0]
+
     del sigma_omega, x_mom_x, x_mom_y, x_mom_gradx, x_mom_grady, y_mom_grady, y_mom_gradx
     torch.cuda.empty_cache()
 
-    omega_transport_term1 = torch.clamp(omega_transport_term1, min=-10.0, max=10.0)
-    omega_transport_term2 = torch.clamp(omega_transport_term2, min=-10.0, max=10.0)
-    G_omega = torch.clamp(G_omega, min=-10.0, max=10.0)
-    Y_omega = torch.clamp(Y_omega, min=-10.0, max=10.0)
-    D_omega = torch.clamp(D_omega, min=-10.0, max=10.0)
+    omega_term1 = torch.clamp(omega_term1, min=-1e6, max=1e6)
+    omega_term2 = torch.clamp(omega_term2, min=-1e6, max=1e6)
+    G_omega = torch.clamp(G_omega, min=-1e6, max=1e6)
+    Y_omega = torch.clamp(Y_omega, min=-1e6, max=1e6)
+    D_omega = torch.clamp(D_omega, min=-1e6, max=1e6)
 
-    omega_residual = omega_t + u * omega_x + v * omega_y - omega_transport_term1 - omega_transport_term2 - G_omega + Y_omega - D_omega
-    del omega_x, omega_y, omega_t
+    omega_residual = omega_t + u * omega_x + v * omega_y - omega_term1 - omega_term2 - G_omega + Y_omega - D_omega
+
+    del omega_x, omega_y, omega_t, G_omega, Y_omega, D_omega, omega_term1, omega_term2
     torch.cuda.empty_cache()
+
     D_t =  1/Re + (1/Re + mu_t)/(0.803)
-    c_residual_term1 = torch.autograd.grad(D_t*c_x-u*c, x, grad_outputs=torch.ones_like(c_x), create_graph=True)[0]
-    c_residual_term2 = torch.autograd.grad(D_t*c_y-v*c, y, grad_outputs=torch.ones_like(c_y), create_graph=True)[0]
-    del u, v, c
-    torch.cuda.empty_cache()
-    c_residual = c_t - c_residual_term1 - c_residual_term2
-    del k_transport_term1, k_transport_term2, omega_transport_term1, omega_transport_term2, D_t, c_residual_term1, c_residual_term2
-    torch.cuda.empty_cache()
+    c_residual = c_t \
+      - torch.autograd.grad(D_t*c_x-u*c, x, grad_outputs=torch.ones_like(c_x), create_graph=True)[0]\
+      - torch.autograd.grad(D_t*c_y-v*c, y, grad_outputs=torch.ones_like(c_y), create_graph=True)[0]
+
+    print(f'pde finish: {torch.cuda.memory_reserved() / 1024 ** 2}')
+
     return continuity_residual, x_momentum_residual, y_momentum_residual, k_residual, omega_residual, c_residual
 
 all_ones_weights = {
@@ -419,15 +426,15 @@ all_ones_weights = {
     }
 
 all_normalized_weights = {
-    'pde': torch.tensor([0.2, 0.1, 0.1, 1000.0, 0.001, 1e9], device=device),
+    'pde': torch.tensor([1.0, 0.1, 0.1, 1000.0, 1e-11, 1e9], device=device),
     # inlet u, v, k, omega (all Dirichlet)
-    'bc': torch.tensor([1.0, 1.0, 100.0, 0.001,
+    'bc': torch.tensor([1.0, 1.0, 5000.0, 0.01,
                         # symmetry_u,v,p,k,omega (all Neumann),v_Dirichlet
-                        1.0, 1.0, 0.2, 100, 0.01, 1.0,
+                        1.0, 1.0, 0.2, 1000, 0.003, 1.0,
                         # out_p  wall_k (all Dirichlet)
-                        0.1, 1000.0], device=device),
-    'ic': torch.tensor([1.0, 1.0, 0.2, 2000, 0.01, 1e10], device=device),
-    'sparse': torch.tensor([1.0, 1.0, 0.2, 2000, 0.01, 1e10], device=device)
+                        0.001, 1000.0], device=device),
+    'ic': torch.tensor([1.0, 1.0, 1.0, 3000, 0.01, 1e9], device=device),
+    'sparse': torch.tensor([1.0, 1.0, 1.0, 3000, 0.01, 1e9], device=device)
 }
 
 def bc_calc_loss(model, boundary_conditions, criterion):
@@ -526,6 +533,8 @@ def log_metrics(writer, tot_epoch, epoch, total_loss, ic_total_loss, bc_total_lo
                 ic_losses, bc_losses, sparse_losses, pde_losses, weights, temporal_weights,
                 model, dataset, lr):
 
+    print(f'log metrics begin: {torch.cuda.memory_reserved() / 1024 ** 2}')
+
     print('log metrics inside method')
     allocated_memory = torch.cuda.memory_allocated() / 1024**2
     reserved_memory = torch.cuda.memory_reserved() / 1024**2
@@ -589,45 +598,18 @@ def log_metrics(writer, tot_epoch, epoch, total_loss, ic_total_loss, bc_total_lo
 
         # generate for x_axis
         eps2 = 0.2
-        x_bc = np.array([i for i in range(25)]) - eps2
-        x_pde = np.array([i for i in range(25)])
-        x_sparse = np.array([i for i in range(25)]) + eps2
-
+        x_ticks = np.array([i for i in range(25)])
         for interval in range(25):
             # bc markers
-            for i in range(12):
-                if i <= 3:
-                    color_index = 0
-                elif 4 <= i <= 9:
-                    color_index = 1
-                elif i == 10:
-                    color_index = 2
-                else:
-                    color_index = 3
-                ax.scatter([x_bc[interval]], temporal_weights['bc'][interval][i].cpu().detach().numpy(),
-                  color=specified_colors[color_index % len(specified_colors)],\
-                    marker='^', edgecolors='black', label=f'bc_{bc_group_names[color_index]}' if interval == 0 and i in {0,4,10,11} else "")
-
-            # pde markers
-            for i in range(6):
-                ax.scatter([x_pde[interval]], temporal_weights['pde'][interval][i].cpu().detach().numpy(),
-                  color=specified_colors[i % len(specified_colors)], marker='o',\
-                    edgecolors='black', label=f'{pde_names[i]}' if interval == 0 else "")
-
-            # sparse markers
-            for i in range(6):
-                ax.scatter([x_sparse[interval]], temporal_weights['sparse'][interval][i].cpu().detach().numpy(),
-                  color=specified_colors[i % len(specified_colors)], marker='s',\
-                    edgecolors='black', label=f'sparse_{sparse_names[i]}' if interval == 0 else "")
+                ax.scatter([x_ticks[interval]], temporal_weights[interval].cpu().detach().numpy(),
+                    color='pink', marker='s', edgecolors='black', label=f'temporal weights' if interval == 0 else '')
 
         # Add titles and labels
-        ax.set_title(f'Temporal Weights from {t_start+1}s to {t_start+100}s')
+        ax.set_title(f'Temporal weights for 4s intervals')
         ax.set_xlabel('Intervals')
         ax.set_ylabel('Temporal Weights (log scale)')
-        ax.set_xticks(x_pde)  # Ensure all integers from 1 to 25 are included on the x-axis
-        handles, labels = ax.get_legend_handles_labels()
-        by_label = dict(zip(labels, handles))
-        ax.legend(by_label.values(), by_label.keys(), ncol=2)  # Set legend to two columns
+        ax.set_xticks(x_ticks)  # Ensure all integers from 1 to 25 are included on the x-axis
+        ax.legend()
 
         writer.add_figure('t_weights_epoch{epoch}', fig, epoch)
 
@@ -654,6 +636,12 @@ def log_metrics(writer, tot_epoch, epoch, total_loss, ic_total_loss, bc_total_lo
           snapshot, simulation, f'c35_resi_t{t_start+1}_epoch{epoch}', U_star = 9.0)
         writer.add_figure('Residuals t = +1s', fig, epoch)
 
+        # Clear the plot and free up memory
+        plt.close(fig)
+        del plot_data, plot_inputs, x, y, continuity, x_mom, y_mom, k_tr, omega_tr, conv_diff, fig
+        torch.cuda.empty_cache()
+        gc.collect()
+
     if epoch % N_plot_error == 0 and epoch != 0:
         with torch.no_grad():
             snapshot, simulation = 1,1
@@ -673,6 +661,14 @@ def log_metrics(writer, tot_epoch, epoch, total_loss, ic_total_loss, bc_total_lo
             fig = plot_fields(x,y,up,vp,pp,kp,op,cp, snapshot, simulation, f'c35_errors_t{t_start+1}', U_star = 9.0)
             writer.add_figure('Errors t = +1s Fields', fig, epoch)
 
+            print(f': {torch.cuda.memory_reserved() / 1024 ** 2}')
+            # Clear the plot and free up memory
+            plt.close(fig)
+            del plot_data, plot_inputs, plot_outputs, x, y, t, Re, theta, u, v, p, k, omega, c
+            del u_pred, v_pred, p_pred, k_pred, omega_pred, c_pred, up, vp, pp, kp, op, cp, fig
+            torch.cuda.empty_cache()
+            gc.collect()
+
     if epoch % N_plot_fields == 0 and epoch != 0:
 # --- predictions ------------------------------------------------------------
         with torch.no_grad():
@@ -686,6 +682,16 @@ def log_metrics(writer, tot_epoch, epoch, total_loss, ic_total_loss, bc_total_lo
                 print(f'predictions {i}')
                 fig = plot_fields(x,y,u,v,p,k,omega,c, snapshot, simulation, f'c35_t{t_start+i+1}_epoch{epoch}', U_star = 9.0)
                 writer.add_figure(f'Predicted t = +{i+1}s Fields', fig, epoch)
+
+                print(f'Predictions1: {torch.cuda.memory_reserved() / 1024 ** 2}')
+
+                # Clear the plot and free up memory
+                plt.close(fig)
+                del plot_data, plot_inputs, x, y, t, Re, theta, u, v, p, k, omega, c, fig
+                torch.cuda.empty_cache()
+                gc.collect()
+
+                print(f'Predictions2: {torch.cuda.memory_reserved() / 1024 ** 2}')
 
     if epoch % N_loss_print == 0:
         print(f'Epoch {epoch}, Loss: {total_loss}')
@@ -926,7 +932,7 @@ def main():
         eps=optim_config.eps,
     )
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=optim_config.decay_steps, gamma=optim_config.decay_rate)
-    writer = SummaryWriter(log_dir=f'../runs/c36_100s_j12_4')
+    writer = SummaryWriter(log_dir=f'../runs/c36_100s_j15_5_eps_0.1')
 
     weights = {
         'bc': torch.ones(12, device=device),
@@ -947,18 +953,66 @@ def main():
 
     tot_epoch = 0
 
+    print(f'before epochs: {torch.cuda.memory_reserved() / 1024 ** 2}')
     for epochs, initial_weights in run_schedule:
         if initial_weights is not None:
             weights = initial_weights
 
         for epoch in range(epochs):
-            print(f'epoch {epoch}')
-            total_loss = 0.0
+            print(f'{epoch}',end='.')
             ic_batch = dataset.get_initial_condition_batch(batch_size).to(device)
             ic_inputs, ic_outputs = prepare_inputs_outputs(ic_batch)
             raw_ic_losses = torch.stack([criterion(model(torch.cat(ic_inputs,
               dim=1))[i], ic_outputs[i].squeeze()) for i in range(6)])
 
+            num_intervals = 25
+            num_components_pde = 6
+            num_components_bc = 12
+            num_components_sparse = 6
+
+# Initialize lists to temporarily store losses
+            all_raw_losses_list = {
+                'pde': [],
+                'sparse': [],
+                'bc': []
+            }
+
+# Loop over batches and intervals
+            print(f'before intervals: {torch.cuda.memory_reserved() / 1024 ** 2}')
+            for interval, batch_data in enumerate(data_loader):
+                #batch_data = batch_data.to(device)
+                inputs, outputs = prepare_inputs_outputs(batch_data)
+                x_sparse, y_sparse, t_sparse, Re_sparse, theta_sparse = [x.float() for x in inputs]
+                u_sparse, v_sparse, p_sparse, k_sparse, omega_sparse, c_sparse = [y.float() for y in outputs]
+                pde_inputs = (x_sparse, y_sparse, t_sparse, Re_sparse, theta_sparse)
+
+                boundary_conditions = generate_boundary_conditions(interval, batch_size//2)
+
+                raw_losses = {
+                    'pde': [],
+                    'sparse': [],
+                    'bc': []
+                }
+
+                raw_losses['bc'] = [loss for loss in bc_calc_loss(model, boundary_conditions, criterion)]
+                raw_losses['pde'] = [criterion(residual, torch.zeros_like(residual)) for residual in pde_residuals(model, *pde_inputs)]
+                raw_losses['sparse'] = [criterion(model(torch.cat(inputs, dim=1))[i], outputs[i].squeeze()) for i in range(6)]
+
+                # Append raw losses to lists
+                all_raw_losses_list['pde'].append(torch.stack(raw_losses['pde']))
+                all_raw_losses_list['bc'].append(torch.stack(raw_losses['bc']))
+                all_raw_losses_list['sparse'].append(torch.stack(raw_losses['sparse']))
+
+# Convert lists to tensors
+            all_raw_losses = {
+                'pde': torch.stack(all_raw_losses_list['pde']),
+                'sparse': torch.stack(all_raw_losses_list['sparse']),
+                'bc': torch.stack(all_raw_losses_list['bc'])
+            }
+
+# Calculate temporal weights
+# Initialization
+            eps_ = 0.1
             num_intervals = 25
             num_components_pde = 6
             num_components_bc = 12
@@ -988,8 +1042,7 @@ def main():
                 }
 
                 raw_losses['bc'] = [loss for loss in bc_calc_loss(model, boundary_conditions, criterion)]
-                raw_losses['pde'] = [criterion(residual, torch.zeros_like(residual))
-                                     for residual in pde_residuals(model, *pde_inputs)]
+                raw_losses['pde'] = [criterion(residual, torch.zeros_like(residual)) for residual in pde_residuals(model, *pde_inputs)]
                 raw_losses['sparse'] = [criterion(model(torch.cat(inputs, dim=1))[i], outputs[i].squeeze()) for i in range(6)]
 
                 # Append raw losses to lists
@@ -1005,57 +1058,49 @@ def main():
             }
 
 # Calculate temporal weights
-            eps_ = 10
-            temporal_weights = {
-                key: torch.ones((25, len(weights[key])), device=device)
-                for key in ['bc', 'pde', 'sparse']
-            }
-
-            for interval in range(1, num_intervals):
-                for key in ['bc', 'pde', 'sparse']:
-                    temporal_weights[key][interval] = torch.clamp(
-                        torch.exp(-eps_ * all_normalized_weights[key] * torch.cumsum(all_raw_losses[key][:interval], dim=0)[-1]),
-                        min=1e-3, max=None
-                    )
-
-# Calculate temporal weighted losses
-            temporal_weighted_losses = {
-                key: torch.ones((25, len(weights[key])), device=device)
-                for key in ['bc', 'pde', 'sparse']
-            }
-
+            combined_normalized_losses = torch.zeros(num_intervals, device=device)
             for interval in range(num_intervals):
                 for key in ['bc', 'pde', 'sparse']:
-                    temporal_weighted_losses[key][interval] = all_raw_losses[key][interval] * temporal_weights[key][interval]
+                    combined_normalized_losses[interval] += (all_normalized_weights[key] * all_raw_losses[key][interval]).sum()
 
-            sum_temporal_weighted_losses = {
-                key: temporal_weighted_losses[key].sum(dim=0)
-                for key in ['bc', 'pde', 'sparse']
-            }
+# Initialize temporal weights
+            temporal_weights = torch.ones(num_intervals, device=device)
 
-            normalized_raw_losses = {
-                'ic': [all_normalized_weights['ic'][i] * raw_ic_losses[i]for i in range(6)],
-                'bc': [all_normalized_weights['bc'][i] * sum_temporal_weighted_losses['bc'][i] for i in range(12)],
-                'sparse': [all_normalized_weights['sparse'][i] * sum_temporal_weighted_losses['sparse'][i] for i in range(6)],
-                'pde': [all_normalized_weights['pde'][i] * sum_temporal_weighted_losses['pde'][i] for i in range(6)],
-            }
+# Dynamically calculate temporal weights based on combined normalized losses
+            for interval in range(1, num_intervals):
+                cumulative_loss = torch.cumsum(combined_normalized_losses[:interval], dim=0)[-1]
+                print(f'{torch.cumsum(combined_normalized_losses[:interval], dim=0)[-1]}\t', end='')
+                exp_weight = torch.exp(-eps_ * cumulative_loss)
+                temporal_weights[interval] = torch.clamp(exp_weight, min=1e-3, max=1.0)
+            print(' ')
 
-            weighted_losses = {
-                'ic': weights['ic'] * raw_ic_losses,
-                'bc': weights['bc'] * sum_temporal_weighted_losses['bc'],
-                'sparse': weights['sparse'] * sum_temporal_weighted_losses['sparse'],
-                'pde': weights['pde'] * sum_temporal_weighted_losses['pde']
-            }
+# Initialize sum_temporal_weighted_losses
+            sum_temporal_weighted_losses = {key: torch.zeros_like(all_raw_losses[key][0]) for key in ['bc', 'pde', 'sparse']}
 
+# Apply temporal weights and sum temporal weighted losses in one operation
+            for interval in range(num_intervals):
+                for key in ['bc', 'pde', 'sparse']:
+                    weighted_loss = all_raw_losses[key][interval] * temporal_weights[interval]
+                    sum_temporal_weighted_losses[key] += weighted_loss
+
+# Create normalized_losses dictionary using sum_temporal_weighted_losses
             normalized_losses = {
-                'ic': all_normalized_weights['ic'] * weighted_losses['ic'],
-                'bc':  all_normalized_weights['sparse'] * weighted_losses['sparse'],
-                'sparse': all_normalized_weights['pde'] * weighted_losses['pde'],
-                'pde': all_normalized_weights['bc'] * weighted_losses['bc'],
+                'ic': all_normalized_weights['ic'] * weights['ic'] * raw_ic_losses,
+                'bc': all_normalized_weights['bc'] * weights['bc'] * sum_temporal_weighted_losses['bc'],
+                'sparse': all_normalized_weights['sparse'] * weights['sparse'] * sum_temporal_weighted_losses['sparse'],
+                'pde': all_normalized_weights['pde'] * weights['pde'] * sum_temporal_weighted_losses['pde']
             }
 
 #--- update global weights ---------------------------------------------------
-            if epoch % N_weight_update == 0 and epoch != 0:
+            if epoch % N_weight_update == 0:
+
+                normalized_raw_losses = {
+                    'ic': [all_normalized_weights['ic'][i] * raw_ic_losses[i]for i in range(6)],
+                    'bc': [all_normalized_weights['bc'][i] * sum_temporal_weighted_losses['bc'][i] for i in range(12)],
+                    'sparse': [all_normalized_weights['sparse'][i] * sum_temporal_weighted_losses['sparse'][i] for i in range(6)],
+                    'pde': [all_normalized_weights['pde'][i] * sum_temporal_weighted_losses['pde'][i] for i in range(6)],
+                }
+
                 max_weight = 1000.0
 
                 gradient_norms = {
@@ -1082,36 +1127,33 @@ def main():
                     min_sparse, min_sparse, 2*min_sparse], device=device)
                 }
 
+                eps_1 = torch.tensor(1e-6)
                 for key in ['ic', 'bc', 'pde', 'sparse']:
                     for i in range(len(weights[key])):
                         model.zero_grad()
-                        normalized_raw_losses[key][i].backward(retain_graph=True)  # Compute gradients
-
-                        # Calculate gradient norm
-                        grad_norm = 0
+                        normalized_raw_losses[key][i].backward(retain_graph=True)
+                        grad_norm = torch.tensor(0.0, device=device)
                         for param in model.parameters():
                             if param.grad is not None:
-                                grad_norm += param.grad.norm().item() ** 2
+                                grad_value = param.grad.norm()
+                                grad_norm += grad_value ** 2
                         grad_norm = grad_norm ** 0.5
-
                         gradient_norms[key][i] = grad_norm
 
                 total_norm = sum([sum(grads) for grads in gradient_norms.values()])
 
-
                 for key in ['ic', 'bc', 'pde', 'sparse']:
                     weight_update = []
-                    eps_1 = 1e-6
                     for i, (grad, weight) in enumerate(zip(gradient_norms[key], weights[key])):
                         if weight != 0:
                             updated_weight = total_norm / max(grad, eps_1)
-                            weight_update.append(updated_weight)
+                            weight_update.append(updated_weight.item())
                         else:
                             weight_update.append(weight.item())
+
                     if len(weight_update) == 0:
                         print(f"No gradients found for {key}, skipping weight update")
                         continue
-
                     weight_update = torch.tensor(weight_update, device=device)
 
                     max_updated_weight = torch.max(weight_update)
@@ -1132,7 +1174,7 @@ def main():
             pde_total_loss = sum(normalized_losses['pde'])
             bc_total_loss = sum(normalized_losses['bc'])
 
-            total_loss += ic_total_loss + sparse_total_loss + pde_total_loss + bc_total_loss
+            total_loss = ic_total_loss + sparse_total_loss + pde_total_loss + bc_total_loss
 
             optimizer.zero_grad()
             total_loss.backward()
@@ -1144,7 +1186,12 @@ def main():
 
 #--- log metrics (tensorboard) -----------------------------------------------
             if epoch % N_log_metrics == 0:
-                print('log metrics in main')
+                normalized_raw_losses = {
+                    'ic': [all_normalized_weights['ic'][i] * raw_ic_losses[i]for i in range(6)],
+                    'bc': [all_normalized_weights['bc'][i] * sum_temporal_weighted_losses['bc'][i] for i in range(12)],
+                    'sparse': [all_normalized_weights['sparse'][i] * sum_temporal_weighted_losses['sparse'][i] for i in range(6)],
+                    'pde': [all_normalized_weights['pde'][i] * sum_temporal_weighted_losses['pde'][i] for i in range(6)],
+                }
                 log_metrics(writer, tot_epoch, epoch, total_loss, ic_total_loss,
                             bc_total_loss, sparse_total_loss, pde_total_loss,
                             [normalized_raw_losses['ic'][i].item() for i in range(6)],
