@@ -5,7 +5,6 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
-torch.cuda.empty_cache()
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import Dataset, DataLoader
 import numpy as np
@@ -15,15 +14,16 @@ from ml_collections import ConfigDict
 from torch.profiler import profile, record_function, ProfilerActivity
 import time
 import random
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
-
-print('run J23 ------------------------- 1 ---------------------------------')
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+print('run ------------------------- 434 ---------------------------------')
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f'Using device: {device}')
 
+torch.backends.cudnn.benchmark = True
 #torch.backends.cudnn.deterministic = True
-#torch.backends.cudnn.benchmark = False
 #torch.autograd.set_detect_anomaly(True)
+#torch.autograd.profiler.profile
+#torch.autograd.gradcheck
 
 def set_seed(seed):
     random.seed(seed)
@@ -78,16 +78,15 @@ optim_config.clip_norm = 1000.0
 #optim_config.weight_decay = 1.0e-4
 
 N_intervals = 25
-t_start = 0
 
-N_log_metrics = 1
-N_loss_print = 1
+N_log_metrics = 10
+N_loss_print = 10
 N_weight_update = 10
 N_plot_fields = 100
-N_plot_tweight = 10
+N_plot_tweight = 100
 N_save_model = 500
-N_plot_error = 15
-N_plot_residuals = 15
+N_plot_error = 500
+N_plot_residuals = 500
 
 def save_model(model, path):
     torch.save(model.state_dict(), path)
@@ -98,7 +97,7 @@ def generate_boundary_conditions(interval, num_samples):
     k_in_value = 3 / 2 * (0.05 * U_in) ** 2
     omega_in_value = 25.0 # if not cliped 2000*80/9
 
-    t_low, t_high = t_start + interval * (100 // N_intervals), t_start + (interval + 1) * (100 // N_intervals)
+    t_low, t_high = interval * (100 // N_intervals), (interval + 1) * (100 // N_intervals)
     theta_values =  torch.tensor([0, np.pi/4, np.pi/2, 3*np.pi/4, np.pi,
                                  5*np.pi/4, 3*np.pi/2, 7*np.pi/4, 2*np.pi], device=device)
     N_each_bc = num_samples
@@ -166,8 +165,7 @@ class PINN(nn.Module):
         super(PINN, self).__init__()
         N1 = 128  # Number of neurons
         self.normalization = NormalizationLayer()
-        self.fourier_embedding = FourierEmbedding(input_dims=5, embed_dims=256,
-                                                  scale=1.0)
+        self.fourier_embedding = FourierEmbedding(input_dims=5, embed_dims=256, scale=1.0)
         self.fc1 = nn.Linear(256, N1)
         self.fc2 = nn.Linear(N1, N1)
         self.fc3 = nn.Linear(N1, N1)
@@ -288,8 +286,8 @@ def pde_residuals(model, x, y, t, Re, theta):
     p_x = torch.autograd.grad(p, x, grad_outputs=torch.ones_like(p), create_graph=True)[0]
     p_y = torch.autograd.grad(p, y, grad_outputs=torch.ones_like(p), create_graph=True)[0]
 
-    del p
-    torch.cuda.empty_cache()
+#   del p
+#   torch.cuda.empty_cache()
 
     k_x = torch.autograd.grad(k, x, grad_outputs=torch.ones_like(k), create_graph=True)[0]
     k_y = torch.autograd.grad(k, y, grad_outputs=torch.ones_like(k), create_graph=True)[0]
@@ -332,8 +330,8 @@ def pde_residuals(model, x, y, t, Re, theta):
     U_star = mu_rho_l * Re
     M_t = U_star * safe_sqrt(2 * k / (gamma * R * T))
 
-    del U_star
-    torch.cuda.empty_cache()
+#   del U_star
+#   torch.cuda.empty_cache()
 
     F_Mt = smooth_conditional(M_t <= M_t0, torch.zeros_like(M_t), M_t ** 2 - M_t0 ** 2)
     beta_star = beta_star_i * (1 + xi_star * F_Mt)
@@ -345,27 +343,27 @@ def pde_residuals(model, x, y, t, Re, theta):
     mu_t = k / omega * (1 / smooth_maximum(1 / alpha_star, S * F2 / (a1 * omega)))
     mu_t = torch.clamp(mu_t, min=1e-12, max=1e6)
 
-    del c_xx, c_yy, y_hat, D_omega_plus, phi_11, phi_12, phi_13, phi_1, phi_21, phi_22, phi_2, F2, beta_i, alpha_star_0, alpha_infinity_1, alpha_infinity_2, alpha_infinity, Re_t, alpha_star, beta_star_i, M_t, F_Mt
-    torch.cuda.empty_cache()
+#   del c_xx, c_yy, y_hat, D_omega_plus, phi_11, phi_12, phi_13, phi_1, phi_21, phi_22, phi_2, F2, beta_i, alpha_star_0, alpha_infinity_1, alpha_infinity_2, alpha_infinity, Re_t, alpha_star, beta_star_i, M_t, F_Mt
+#   torch.cuda.empty_cache()
 
     G_k = mu_t * S ** 2
 
     Y_k = beta_star * k * omega
     G_k_tilde = smooth_minimum(G_k, 10 * beta_star * k * omega)
 
-    del S, beta_star
-    torch.cuda.empty_cache()
+#   del S, beta_star
+#   torch.cuda.empty_cache()
 
     G_omega = alpha / mu_t * G_k_tilde
 
-    del alpha
-    torch.cuda.empty_cache()
+#   del alpha
+#   torch.cuda.empty_cache()
 
     Y_omega = beta * omega ** 2
     D_omega = 2 * (1 - F1) * (sigma_omega2 / omega) * (k_x * omega_x + k_y * omega_y)
 
-    del F1, omega, k, beta
-    torch.cuda.empty_cache()
+#   del F1, omega, k, beta
+#   torch.cuda.empty_cache()
 
     continuity_residual = u_x + v_y
     x_mom_x = (1/Re + mu_t) * (4/3 * u_x - 2/3 * v_y)
@@ -377,24 +375,25 @@ def pde_residuals(model, x, y, t, Re, theta):
     y_mom_gradx = torch.autograd.grad((1/Re + mu_t) * (v_x + u_y), x, grad_outputs=torch.ones_like(v_y), create_graph=True)[0]
     y_momentum_residual = v_t + u * v_x + v * v_y + p_y - y_mom_grady - y_mom_gradx
 
-    del v_x, v_y, v_t, u_x, u_y, u_t, p_x, p_y
-    torch.cuda.empty_cache()
+#   del v_x, v_y, v_t, u_x, u_y, u_t, p_x, p_y
+#   torch.cuda.empty_cache()
 
     k_transport_term1 = torch.autograd.grad((1 / Re + mu_t / sigma_k) * k_x, x, grad_outputs=torch.ones_like(k_x), create_graph=True)[0]
     k_transport_term2 = torch.autograd.grad((1 / Re + mu_t / sigma_k) * k_y, y, grad_outputs=torch.ones_like(k_y), create_graph=True)[0]
-    del sigma_k
-    torch.cuda.empty_cache()
+
+#   del sigma_k
+#   torch.cuda.empty_cache()
 
     k_residual = k_t + u * k_x + v * k_y - k_transport_term1 - k_transport_term2 - G_k + Y_k
 
-    del k_transport_term1, k_transport_term2, k_x, k_y, k_t
-    torch.cuda.empty_cache()
+#   del k_transport_term1, k_transport_term2, k_x, k_y, k_t
+#   torch.cuda.empty_cache()
 
     omega_term1 = torch.autograd.grad((1 / Re + mu_t / sigma_omega) * omega_x, x, grad_outputs=torch.ones_like(omega_x), create_graph=True)[0]
     omega_term2 = torch.autograd.grad((1 / Re + mu_t / sigma_omega) * omega_y, y, grad_outputs=torch.ones_like(omega_y), create_graph=True)[0]
 
-    del sigma_omega, x_mom_x, x_mom_y, x_mom_gradx, x_mom_grady, y_mom_grady, y_mom_gradx
-    torch.cuda.empty_cache()
+#   del sigma_omega, x_mom_x, x_mom_y, x_mom_gradx, x_mom_grady, y_mom_grady, y_mom_gradx
+#   torch.cuda.empty_cache()
 
     omega_term1 = torch.clamp(omega_term1, min=-1e6, max=1e6)
     omega_term2 = torch.clamp(omega_term2, min=-1e6, max=1e6)
@@ -404,8 +403,8 @@ def pde_residuals(model, x, y, t, Re, theta):
 
     omega_residual = omega_t + u * omega_x + v * omega_y - omega_term1 - omega_term2 - G_omega + Y_omega - D_omega
 
-    del omega_x, omega_y, omega_t, G_omega, Y_omega, D_omega, omega_term1, omega_term2
-    torch.cuda.empty_cache()
+#   del omega_x, omega_y, omega_t, G_omega, Y_omega, D_omega, omega_term1, omega_term2
+#   torch.cuda.empty_cache()
 
     D_t =  1/Re + (1/Re + mu_t)/(0.803)
     c_residual = c_t \
@@ -429,7 +428,7 @@ all_normalized_weights = {
                         # symmetry_u,v,p,k,omega (all Neumann),v_Dirichlet
                         1.0, 1.0, 0.2, 1000, 0.003, 1.0,
                         # out_p  wall_k (all Dirichlet)
-                        0.001, 1000.0], device=device),
+                        1.0, 1000.0], device=device),
     'ic': torch.tensor([1.0, 1.0, 1.0, 3000, 0.01, 1e9], device=device),
     'sparse': torch.tensor([1.0, 1.0, 1.0, 3000, 0.01, 1e9], device=device)
 }
@@ -495,20 +494,71 @@ class CustomDataset(Dataset):
         return self.data[idx]
 
     def get_initial_condition_batch(self, batch_size):
-        indices = torch.randperm(self.elements_per_snapshot)[:batch_size] + self.elements_per_simulation * self.num_simulations * t_start
+        indices = torch.randperm(self.elements_per_snapshot)[:batch_size]
         return self.data[indices]
 
     def get_plotting_data(self, snapshot, simulation):
-        start_idx = (snapshot - 1) * self.elements_per_snapshot + (simulation - 1) * self.elements_per_simulation + self.elements_per_simulation * self.num_simulations * t_start
+        start_idx = (snapshot - 1) * self.elements_per_snapshot + (simulation - 1) * self.elements_per_simulation
         end_idx = start_idx + self.elements_per_simulation
         return self.data[start_idx:end_idx]
 
     def get_data_from_interval(self, interval):
-        start_snapshot = (interval + t_start) * self.snapshots_per_interval
-        end_snapshot = (interval + t_start + 1) * self.snapshots_per_interval
+        start_snapshot = interval * self.snapshots_per_interval
+        end_snapshot = start_snapshot + self.snapshots_per_interval
         start_idx = start_snapshot * self.elements_per_snapshot
         end_idx = end_snapshot * self.elements_per_snapshot
         return self.data[start_idx:end_idx]
+
+''' Jul15_1936
+class CustomDataset(Dataset):
+    def __init__(self, data_array, num_intervals=25, num_simulations=1):
+        self.data = torch.tensor(data_array, dtype=torch.float32).to(device)
+        self.num_intervals = num_intervals
+        self.num_simulations = num_simulations
+        self.total_snapshots = 100
+        self.snapshots_per_interval = self.total_snapshots // self.num_intervals
+        self.elements_per_simulation = 13001
+        self.total_data_size = self.num_simulations * self.elements_per_simulation * self.num_intervals
+        self.elements_per_snapshot = self.num_simulations * self.elements_per_simulation
+        self.interval_data = self._prepare_interval_data()
+
+    def _prepare_interval_data(self):
+        interval_data = []
+        for interval in range(self.num_intervals):
+            start_snapshot = (interval) * self.snapshots_per_interval
+            end_snapshot = (interval+ 1) * self.snapshots_per_interval
+            start_idx = start_snapshot * self.elements_per_snapshot
+            end_idx = end_snapshot * self.elements_per_snapshot
+            interval_data.append(self.data[start_idx:end_idx])
+        return interval_data
+
+    def __len__(self):
+        return len(self.interval_data)
+
+    def __getitem__(self, idx):
+        return self.interval_data[idx]
+
+    def get_initial_condition_batch(self, batch_size):
+        indices = torch.randperm(self.elements_per_snapshot)[:batch_size]
+        return self.data[indices]
+
+    def get_plotting_data(self, snapshot, simulation):
+        start_idx = (snapshot - 1) * self.elements_per_snapshot + (simulation - 1) * self.elements_per_simulation
+        end_idx = start_idx + self.elements_per_simulation
+        return self.data[start_idx:end_idx]
+
+    def get_data_from_interval(self, interval):
+        start_snapshot = (interval) * self.snapshots_per_interval
+        end_snapshot = (interval + 1) * self.snapshots_per_interval
+        start_idx = start_snapshot * self.elements_per_snapshot
+        end_idx = end_snapshot * self.elements_per_snapshot
+        return self.data[start_idx:end_idx]
+
+def interval_collate_fn(batch):
+    interval_data = batch[0]
+    indices = torch.randperm(len(interval_data))[:batch_size]
+    return interval_data[indices]
+'''
 
 class IntervalDataLoader:
     def __init__(self, dataset, batch_size):
@@ -615,7 +665,7 @@ def log_metrics(writer, tot_epoch, epoch, total_loss, ic_total_loss, bc_total_lo
             plot_inputs, plot_outputs = prepare_inputs_outputs(plot_data)
             x,y,t,Re,theta = plot_inputs
             u,v,p,k,omega,c = plot_outputs
-            fig = plot_fields(x,y,u,v,p,k,omega,c, snapshot, simulation, f'c35_actual_t{t_start+i}', U_star = 9.0)
+            fig = plot_fields(x,y,u,v,p,k,omega,c, snapshot, simulation, f'c35_actual_t{i}', U_star = 9.0)
             writer.add_figure(f'Actual t = +1s Fields', fig, epoch)
 
     if epoch % N_plot_residuals== 0 and epoch != 0:
@@ -626,7 +676,7 @@ def log_metrics(writer, tot_epoch, epoch, total_loss, ic_total_loss, bc_total_lo
         continuity, x_mom, y_mom, k_tr, omega_tr, conv_diff =\
           pde_residuals(model, *plot_inputs)
         fig = plot_residuals(x,y,continuity, x_mom, y_mom, k_tr, omega_tr, conv_diff,
-          snapshot, simulation, f'c35_resi_t{t_start+1}_epoch{epoch}', U_star = 9.0)
+          snapshot, simulation, f'c35_resi_t{1}_epoch{epoch}', U_star = 9.0)
         writer.add_figure('Residuals t = +1s', fig, epoch)
 
         # Clear the plot and free up memory
@@ -650,7 +700,7 @@ def log_metrics(writer, tot_epoch, epoch, total_loss, ic_total_loss, bc_total_lo
             kp = k_pred.unsqueeze(1) - k
             op = omega_pred.unsqueeze(1) - omega
             cp = c_pred.unsqueeze(1) - c
-            fig = plot_fields(x,y,up,vp,pp,kp,op,cp, snapshot, simulation, f'c35_errors_t{t_start+1}', U_star = 9.0)
+            fig = plot_fields(x,y,up,vp,pp,kp,op,cp, snapshot, simulation, f'c35_errors_t{1}', U_star = 9.0)
             writer.add_figure('Errors t = +1s Fields', fig, epoch)
 
             # Clear the plot and free up memory
@@ -670,7 +720,7 @@ def log_metrics(writer, tot_epoch, epoch, total_loss, ic_total_loss, bc_total_lo
                 plot_inputs, _ = prepare_inputs_outputs(plot_data)
                 x,y,t,Re,theta = plot_inputs
                 u, v, p, k, omega, c = model(torch.cat([x, y, t, Re, theta], dim=1))
-                fig = plot_fields(x,y,u,v,p,k,omega,c, snapshot, simulation, f'c35_t{t_start+i+1}_epoch{epoch}', U_star = 9.0)
+                fig = plot_fields(x,y,u,v,p,k,omega,c, snapshot, simulation, f'c35_t{i+1}_epoch{epoch}', U_star = 9.0)
                 writer.add_figure(f'Predicted t = +{i+1}s Fields', fig, epoch)
 
 
@@ -734,40 +784,40 @@ def plot_fields(x, y, u, v, p, k, omega, c, snapshot,
         plt.subplot(3, 2, 1)
         plt.tricontourf(triang, u.squeeze(), cmap='jet', levels=100)
         plt.colorbar()
-        plt.title(f'Predicted $u$ at time {t_start+snapshot}s [$m/s$]')
+        plt.title(f'Predicted $u$ at time {snapshot}s [$m/s$]')
         plt.tight_layout()
 
         plt.subplot(3, 2, 3)
         plt.tricontourf(triang, v.squeeze(), cmap='jet', levels=100)
         plt.colorbar()
-        plt.title(f'Predicted $v$ at time {t_start+snapshot}s [$m/s$]')
+        plt.title(f'Predicted $v$ at time {snapshot}s [$m/s$]')
         plt.tight_layout()
 
         plt.subplot(3, 2, 5)
         plt.tricontourf(triang, p.squeeze(), cmap='jet', levels=100)
         plt.colorbar()
-        plt.title(f'Predicted $p$ at time {t_start+snapshot}s [pa]')
+        plt.title(f'Predicted $p$ at time {snapshot}s [pa]')
         plt.tight_layout()
 
         k_plot = k.squeeze()
         plt.subplot(3, 2, 2)
         plt.tricontourf(triang, k_plot, cmap='jet', levels=100)
         plt.colorbar()
-        plt.title(f'Predicted $k$ at time {t_start+snapshot}s [$m^2/s^2$]')
+        plt.title(f'Predicted $k$ at time {snapshot}s [$m^2/s^2$]')
         plt.tight_layout()
 
         omega_plot = omega.squeeze()
         plt.subplot(3, 2, 4)
         plt.tricontourf(triang, omega_plot, cmap='jet', levels=100)
         plt.colorbar()
-        plt.title(f'Predicted $\omega$ at time {t_start+snapshot}s [$1/s$]')
+        plt.title(f'Predicted $\omega$ at time {snapshot}s [$1/s$]')
         plt.tight_layout()
 
         c_plot = c.squeeze()
         plt.subplot(3, 2, 6)
         plt.tricontourf(triang, c_plot, cmap='jet', levels=100)
         plt.colorbar()
-        plt.title(f'Predicted $c$ at time {t_start+snapshot}s []')
+        plt.title(f'Predicted $c$ at time {snapshot}s []')
         plt.tight_layout()
 
         # Save the figure
@@ -824,37 +874,37 @@ def plot_residuals(x, y, x_mom, y_mom, continuity, k_tr, omega_tr, conv_diff, sn
         plt.subplot(3, 2, 1)
         plt.tricontourf(triang, x_mom.squeeze(), cmap='jet', levels=100)
         plt.colorbar()
-        plt.title(f'x-momentum residuals at time {t_start+snapshot}s ')
+        plt.title(f'x-momentum residuals at time {snapshot}s ')
         plt.tight_layout()
 
         plt.subplot(3, 2, 3)
         plt.tricontourf(triang, y_mom.squeeze(), cmap='jet', levels=100)
         plt.colorbar()
-        plt.title(f'y-momentum residuals at time {t_start+snapshot}s ')
+        plt.title(f'y-momentum residuals at time {snapshot}s ')
         plt.tight_layout()
 
         plt.subplot(3, 2, 5)
         plt.tricontourf(triang, continuity.squeeze(), cmap='jet', levels=100)
         plt.colorbar()
-        plt.title(f'Continuity residuals at time {t_start+snapshot}s')
+        plt.title(f'Continuity residuals at time {snapshot}s')
         plt.tight_layout()
 
         plt.subplot(3, 2, 2)
         plt.tricontourf(triang, k_tr.squeeze(), cmap='jet', levels=100)
         plt.colorbar()
-        plt.title(f'$k$ residuals at time {t_start+snapshot}s')
+        plt.title(f'$k$ residuals at time {snapshot}s')
         plt.tight_layout()
 
         plt.subplot(3, 2, 4)
         plt.tricontourf(triang, omega_tr.squeeze(), cmap='jet', levels=100)
         plt.colorbar()
-        plt.title(f'$\omega$-transport residuals time {t_start+snapshot}s')
+        plt.title(f'$\omega$-transport residuals time {snapshot}s')
         plt.tight_layout()
 
         plt.subplot(3, 2, 6)
         plt.tricontourf(triang, conv_diff.squeeze(), cmap='jet', levels=100)
         plt.colorbar()
-        plt.title(f'Convection-Diffusion residuals at time {t_start+snapshot}s')
+        plt.title(f'Convection-Diffusion residuals at time {snapshot}s')
         plt.tight_layout()
 
         # Save the figure
@@ -873,13 +923,25 @@ def calculate_ic_losses(model, inputs, outputs, criterion):
     predictions = model(concatenated_inputs)
     return [criterion(predictions[i], outputs[i].squeeze()) for i in range(6)]
 
+def load_model_state(model, model_path):
+    state_dict = torch.load(model_path)
+    new_state_dict = {}
+    for k, v in state_dict.items():
+        if k.startswith('module.'):
+            new_state_dict[k[len('module.'):]] = v
+        else:
+            new_state_dict['module.' + k] = v
+    model.load_state_dict(new_state_dict)
+
 def main():
     print('main')
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     criterion = nn.MSELoss().cuda()
     model = PINN().to(device)
+#   if torch.cuda.device_count() > 1:
+#       model = nn.DataParallel(model)
 
-    model.load_state_dict(torch.load(f'../models/c35_{t_start+1}_{t_start+10}.pth'))
+    model.load_state_dict(torch.load(f'../c35_single_100s_1.pth'))
 
     optimizer = optim.Adam(
         model.parameters(),
@@ -888,7 +950,7 @@ def main():
         eps=optim_config.eps,
     )
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=optim_config.decay_steps, gamma=optim_config.decay_rate)
-    writer = SummaryWriter(log_dir=f'../runs/c36_100s_j15_6_eps_0.1')
+    writer = SummaryWriter(log_dir=f'../runs/c36_100s_j16_1_eps_0.01')
 
     weights = {
         'bc': torch.ones(12, device=device),
@@ -906,6 +968,8 @@ def main():
     data_array = np.load("../data/single.npy")
     dataset = CustomDataset(data_array, num_intervals=25, num_simulations=1)
     data_loader = IntervalDataLoader(dataset, batch_size=batch_size)
+#   data_loader = DataLoader(dataset, batch_size=128, shuffle=False, num_workers=4, collate_fn=interval_collate_fn)
+
 
     tot_epoch = 0
 
@@ -913,16 +977,15 @@ def main():
         if initial_weights is not None:
             weights = initial_weights
 
-        for epoch in range(epochs): print(f'epoch: {epoch}') ic_batch = dataset.get_initial_condition_batch(batch_size).to(device) ic_inputs, ic_outputs = prepare_inputs_outputs(ic_batch) raw_ic_losses = torch.stack([criterion(model(torch.cat(ic_inputs,
+        for epoch in range(epochs):
+            print(f'epoch:{epoch}...')
+            ic_batch = dataset.get_initial_condition_batch(batch_size).to(device)
+            ic_inputs, ic_outputs = prepare_inputs_outputs(ic_batch)
+            raw_ic_losses = torch.stack([criterion(model(torch.cat(ic_inputs,
               dim=1))[i], ic_outputs[i].squeeze()) for i in range(6)])
 
-            num_intervals = 25
-            num_components_pde = 6
-            num_components_bc = 12
-            num_components_sparse = 6
-
 # Initialization
-            eps_ = 0.1
+            eps_ = 0.01
             num_intervals = 25
             num_components_pde = 6
             num_components_bc = 12
@@ -938,6 +1001,7 @@ def main():
 # Loop over batches and intervals
             for interval, batch_data in enumerate(data_loader):
                 #batch_data = batch_data.to(device)
+                print(f'interval: {interval}  ', end='\r')
                 inputs, outputs = prepare_inputs_outputs(batch_data)
                 x_sparse, y_sparse, t_sparse, Re_sparse, theta_sparse = [x.float() for x in inputs]
                 u_sparse, v_sparse, p_sparse, k_sparse, omega_sparse, c_sparse = [y.float() for y in outputs]
@@ -1079,9 +1143,10 @@ def main():
 
             total_loss = ic_total_loss + sparse_total_loss + pde_total_loss + bc_total_loss
 
-            optimizer.zero_grad()
+#           optimizer.zero_grad()
+            for param in model.parameters():
+                param.grad = None
             total_loss.backward()
-            # Gradient clipping
             torch.nn.utils.clip_grad_norm_(model.parameters(), optim_config.clip_norm)
             optimizer.step()
             scheduler.step()
