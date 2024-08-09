@@ -14,9 +14,9 @@ from ml_collections import ConfigDict
 from torch.profiler import profile, record_function, ProfilerActivity
 import time
 import random
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-print('run ------------------------- 434 ---------------------------------')
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+os.environ["CUDA_VISIBLE_DEVICES"] = "2"
+print('run ------------------------- J18_1 ---------------------------------')
+device = torch.device('cuda')# if torch.cuda.is_available() else 'cpu')
 print(f'Using device: {device}')
 
 torch.backends.cudnn.benchmark = True
@@ -80,11 +80,11 @@ optim_config.clip_norm = 1000.0
 N_intervals = 25
 
 N_log_metrics = 10
-N_loss_print = 10
+N_loss_print = 20
 N_weight_update = 10
 N_plot_fields = 100
 N_plot_tweight = 100
-N_save_model = 500
+N_save_model = 250
 N_plot_error = 500
 N_plot_residuals = 500
 
@@ -414,11 +414,11 @@ def pde_residuals(model, x, y, t, Re, theta):
 
     return continuity_residual, x_momentum_residual, y_momentum_residual, k_residual, omega_residual, c_residual
 
-all_ones_weights = {
-        'pde': torch.tensor([1.0] * 6, device=device),
-        'bc': torch.tensor([1.0] * 12, device=device),
-        'ic': torch.tensor([1.0] * 6, device=device),
-        'sparse': torch.tensor([1.0] * 6, device=device)
+all_hundreds_weights = {
+        'pde': torch.tensor([100.0] * 6, device=device),
+        'bc': torch.tensor([100.0] * 12, device=device),
+        'ic': torch.tensor([100.0] * 6, device=device),
+        'sparse': torch.tensor([100.0] * 6, device=device)
     }
 
 all_normalized_weights = {
@@ -482,7 +482,7 @@ class CustomDataset(Dataset):
         self.num_intervals = num_intervals
         self.num_simulations = num_simulations
         self.total_snapshots = 100
-        self.snapshots_per_interval = self.total_snapshots//self.num_intervals
+        self.snapshots_per_interval = self.total_snapshots // self.num_intervals
         self.elements_per_simulation = 13001
         self.total_data_size = self.num_simulations*self.elements_per_simulation*self.num_intervals
         self.elements_per_snapshot = self.num_simulations*self.elements_per_simulation
@@ -509,56 +509,6 @@ class CustomDataset(Dataset):
         end_idx = end_snapshot * self.elements_per_snapshot
         return self.data[start_idx:end_idx]
 
-''' Jul15_1936
-class CustomDataset(Dataset):
-    def __init__(self, data_array, num_intervals=25, num_simulations=1):
-        self.data = torch.tensor(data_array, dtype=torch.float32).to(device)
-        self.num_intervals = num_intervals
-        self.num_simulations = num_simulations
-        self.total_snapshots = 100
-        self.snapshots_per_interval = self.total_snapshots // self.num_intervals
-        self.elements_per_simulation = 13001
-        self.total_data_size = self.num_simulations * self.elements_per_simulation * self.num_intervals
-        self.elements_per_snapshot = self.num_simulations * self.elements_per_simulation
-        self.interval_data = self._prepare_interval_data()
-
-    def _prepare_interval_data(self):
-        interval_data = []
-        for interval in range(self.num_intervals):
-            start_snapshot = (interval) * self.snapshots_per_interval
-            end_snapshot = (interval+ 1) * self.snapshots_per_interval
-            start_idx = start_snapshot * self.elements_per_snapshot
-            end_idx = end_snapshot * self.elements_per_snapshot
-            interval_data.append(self.data[start_idx:end_idx])
-        return interval_data
-
-    def __len__(self):
-        return len(self.interval_data)
-
-    def __getitem__(self, idx):
-        return self.interval_data[idx]
-
-    def get_initial_condition_batch(self, batch_size):
-        indices = torch.randperm(self.elements_per_snapshot)[:batch_size]
-        return self.data[indices]
-
-    def get_plotting_data(self, snapshot, simulation):
-        start_idx = (snapshot - 1) * self.elements_per_snapshot + (simulation - 1) * self.elements_per_simulation
-        end_idx = start_idx + self.elements_per_simulation
-        return self.data[start_idx:end_idx]
-
-    def get_data_from_interval(self, interval):
-        start_snapshot = (interval) * self.snapshots_per_interval
-        end_snapshot = (interval + 1) * self.snapshots_per_interval
-        start_idx = start_snapshot * self.elements_per_snapshot
-        end_idx = end_snapshot * self.elements_per_snapshot
-        return self.data[start_idx:end_idx]
-
-def interval_collate_fn(batch):
-    interval_data = batch[0]
-    indices = torch.randperm(len(interval_data))[:batch_size]
-    return interval_data[indices]
-'''
 
 class IntervalDataLoader:
     def __init__(self, dataset, batch_size):
@@ -625,34 +575,20 @@ def log_metrics(writer, tot_epoch, epoch, total_loss, ic_total_loss, bc_total_lo
 
     # Log temporal weights
     if epoch % N_plot_tweight == 0:
-        specified_colors = ['#E57373', '#FFB74D', '#BA68C8', '#64B5F6', '#4DB6AC', '#A9A9A9']
-        def get_bc_color(index):
-            if index < 4:
-                return specified_colors[0]
-            elif index < 10:
-                return specified_colors[1]
-            elif index == 10:
-                return specified_colors[2]
-            else:
-                return specified_colors[3]
-
         # Create a logarithmic plot
         fig, ax = plt.subplots(figsize=(10, 6))
         ax.set_yscale('log')
 
         # generate for x_axis
-        eps2 = 0.2
         x_ticks = np.array([i for i in range(25)])
         for interval in range(25):
-            # bc markers
-                ax.scatter([x_ticks[interval]], temporal_weights[interval].cpu().detach().numpy(),
-                    color='pink', marker='s', edgecolors='black', label=f'temporal weights' if interval == 0 else '')
+            ax.scatter([x_ticks[interval]], temporal_weights[interval].cpu().detach().numpy(),
+              color='pink', marker='s', edgecolors='black', label=f'temporal weights' if interval == 0 else '')
 
-        # Add titles and labels
         ax.set_title(f'Temporal weights for 4s intervals')
         ax.set_xlabel('Intervals')
         ax.set_ylabel('Temporal Weights (log scale)')
-        ax.set_xticks(x_ticks)  # Ensure all integers from 1 to 25 are included on the x-axis
+        ax.set_xticks(x_ticks)
         ax.legend()
 
         writer.add_figure('t_weights_epoch{epoch}', fig, epoch)
@@ -723,19 +659,17 @@ def log_metrics(writer, tot_epoch, epoch, total_loss, ic_total_loss, bc_total_lo
                 fig = plot_fields(x,y,u,v,p,k,omega,c, snapshot, simulation, f'c35_t{i+1}_epoch{epoch}', U_star = 9.0)
                 writer.add_figure(f'Predicted t = +{i+1}s Fields', fig, epoch)
 
-
                 # Clear the plot and free up memory
                 plt.close(fig)
                 del plot_data, plot_inputs, x, y, t, Re, theta, u, v, p, k, omega, c, fig
                 torch.cuda.empty_cache()
                 gc.collect()
 
-
     if epoch % N_loss_print == 0:
         print(f'[{epoch}]:\t{total_loss}')
 
     if epoch % N_save_model == 0 and epoch != 0:
-        save_model(model, f'../c35_single_100s_1.pth')
+        save_model(model, f'../c35_single_100s_5.pth')
 
 def plot_fields(x, y, u, v, p, k, omega, c, snapshot,
                 simulation,  name = 'new_fig', U_star = None, save_dir="figures"):
@@ -941,7 +875,7 @@ def main():
 #   if torch.cuda.device_count() > 1:
 #       model = nn.DataParallel(model)
 
-    model.load_state_dict(torch.load(f'../c35_single_100s_1.pth'))
+    model.load_state_dict(torch.load(f'../models/c35_single_100s_4.pth'))
 
     optimizer = optim.Adam(
         model.parameters(),
@@ -950,18 +884,18 @@ def main():
         eps=optim_config.eps,
     )
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=optim_config.decay_steps, gamma=optim_config.decay_rate)
-    writer = SummaryWriter(log_dir=f'../runs/c36_100s_j16_1_eps_0.01')
+    writer = SummaryWriter(log_dir=f'../runs/c38_100s_j31_2_eps_0.02')
 
-    weights = {
-        'bc': torch.ones(12, device=device),
-        'ic': torch.ones(6, device=device),
-        'pde': torch.ones(6, device=device),
-        'sparse': torch.ones(6, device=device)
-    }
+#   weights = {
+#       'bc': torch.ones(12, device=device),
+#       'ic': torch.ones(6, device=device),
+#       'pde': torch.ones(6, device=device),
+#       'sparse': torch.ones(6, device=device)
+#   }
 
     print('scheduler')
     run_schedule = [
-        (25000, all_ones_weights),
+        (25000, all_hundreds_weights),
     ]
 
     batch_size = 128
@@ -984,8 +918,7 @@ def main():
             raw_ic_losses = torch.stack([criterion(model(torch.cat(ic_inputs,
               dim=1))[i], ic_outputs[i].squeeze()) for i in range(6)])
 
-# Initialization
-            eps_ = 0.01
+            eps_ = 0.02
             num_intervals = 25
             num_components_pde = 6
             num_components_bc = 12
@@ -1001,7 +934,7 @@ def main():
 # Loop over batches and intervals
             for interval, batch_data in enumerate(data_loader):
                 #batch_data = batch_data.to(device)
-                print(f'interval: {interval}  ', end='\r')
+#               print(f'interval: {interval}  ', end='\r')
                 inputs, outputs = prepare_inputs_outputs(batch_data)
                 x_sparse, y_sparse, t_sparse, Re_sparse, theta_sparse = [x.float() for x in inputs]
                 u_sparse, v_sparse, p_sparse, k_sparse, omega_sparse, c_sparse = [y.float() for y in outputs]
@@ -1024,17 +957,20 @@ def main():
                 all_raw_losses_list['bc'].append(torch.stack(raw_losses['bc']))
                 all_raw_losses_list['sparse'].append(torch.stack(raw_losses['sparse']))
 
-# Convert lists to tensors
+            # Convert lists to tensors
             all_raw_losses = {
                 'pde': torch.stack(all_raw_losses_list['pde']),
                 'sparse': torch.stack(all_raw_losses_list['sparse']),
                 'bc': torch.stack(all_raw_losses_list['bc'])
             }
 
-# Calculate temporal weights
+            # Calculate temporal weights
             combined_normalized_losses = torch.zeros(num_intervals, device=device)
             for interval in range(num_intervals):
                 for key in ['bc', 'pde', 'sparse']:
+                    # Skip PDE loss for the last 8 intervals
+                    if key == 'pde' and interval >= num_intervals - 8:
+                        continue
                     combined_normalized_losses[interval] += (all_normalized_weights[key] * all_raw_losses[key][interval]).sum()
 
             temporal_weights = torch.ones(num_intervals, device=device)
@@ -1046,6 +982,9 @@ def main():
             sum_temporal_weighted_losses = {key: torch.zeros_like(all_raw_losses[key][0]) for key in ['bc', 'pde', 'sparse']}
             for interval in range(num_intervals):
                 for key in ['bc', 'pde', 'sparse']:
+                    # Skip PDE loss for the last 8 intervals
+                    if key == 'pde' and interval >= num_intervals - 8:
+                        continue
                     weighted_loss = all_raw_losses[key][interval] * temporal_weights[interval]
                     sum_temporal_weighted_losses[key] += weighted_loss
 
@@ -1056,10 +995,8 @@ def main():
                 'pde': all_normalized_weights['pde'] * weights['pde'] * sum_temporal_weighted_losses['pde']
             }
 
-
-
 #--- update global weights ---------------------------------------------------
-            if epoch % N_weight_update == 0 and epoch !=0:
+            if epoch % N_weight_update == 0:
 
                 normalized_raw_losses = {
                     'ic': [all_normalized_weights['ic'][i] * raw_ic_losses[i]for i in range(6)],
@@ -1077,21 +1014,21 @@ def main():
                     'bc': torch.zeros(12, device=device)
                 }
 
-                min_bc = 1.0
+                min_bc = 100.0
                 min_ic = 50.0
                 min_sparse = 50.0
                 min_pde = 1.0
                 min_weights = {
-                    'ic': torch.tensor([min_ic, min_ic, min_ic, min_ic, min_ic, 2*min_ic], device=device),
-                    'pde': torch.tensor([min_pde, min_pde, min_pde, 5*min_pde, 50*min_pde, 50*min_pde], device=device),
+                    'ic': torch.tensor([min_ic, min_ic, min_ic, min_ic, min_ic, min_ic], device=device),
+                    'pde': torch.tensor([min_pde, min_pde, min_pde, min_pde, min_pde, min_pde], device=device),
                     # inlet u, v, k, omega (all Dirichlet)
                     'bc': torch.tensor([min_bc, min_bc, min_bc, min_bc,
                                         # symmetry_u,v,p,k,omega (all Neumann),v_Dirichlet
                                         min_bc, min_bc, min_bc, min_bc, min_bc, min_bc,
                                         # out_p  wall_u,v,k (all Dirichlet)
-                                        min_bc, 5*min_bc], device=device),
+                                        min_bc, min_bc], device=device),
                     'sparse': torch.tensor([min_sparse, min_sparse, min_sparse,
-                    min_sparse, min_sparse, 2*min_sparse], device=device)
+                    2*min_sparse, 2*min_sparse, 2*min_sparse], device=device)
                 }
 
                 eps_1 = torch.tensor(1e-6)

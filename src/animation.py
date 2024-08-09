@@ -13,7 +13,7 @@ import torch.nn as nn
 from torch.utils.data import Dataset
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
-model_files = [f'../models/c35_{i*10+1}_{i*10+10}.pth' for i in range(10)]
+model_files = ['../models/c35_single_100s_3.pth']
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -108,13 +108,13 @@ def prepare_inputs_outputs(batch_data):
 class CustomDataset(Dataset):
     def __init__(self, data_array):
         self.data = torch.tensor(data_array, dtype=torch.float32).to(device)
-        self.elements_per_snapshot = 3*13001
+        self.elements_per_snapshot = 13001
         self.elements_per_simulation = 13001
 
     def get_plotting_data(self, snapshot, simulation):
         start_idx = (snapshot - 1) * self.elements_per_snapshot +\
           (simulation - 1) * self.elements_per_simulation
-        end_idx = start_idx + self.elements_per_simulation
+        end_idx = start_idx + self.elements_per_snapshot
         return self.data[start_idx:end_idx]
 
 def load_model(model_file):
@@ -166,18 +166,39 @@ def plot_fields(x, y, u, v, p, k, omega, c, snapshot,
 
         # Plotting details stored in a dictionary
         plot_details = [
-            {'data': u, 'levels': np.linspace(-6, 20, 100), 'ticks': np.linspace(-6, 18, 7),\
-             'title': f'Simulation $u$ at time {snapshot}$s$ [$m/s$]', 'scientific': False},
-            {'data': v, 'levels': np.linspace(-9, 9, 100), 'ticks': np.linspace(-9, 9, 7),\
-             'title': f'Simulation $v$ at time {snapshot}$s$ [$m/s$]', 'scientific': False},
-            {'data': p, 'levels': np.linspace(-160, 60, 100), 'ticks': np.linspace(-160, 60, 7),\
-             'title': f'Simulation $p$ at time {snapshot}$s$ [pa]', 'scientific': False},
-            {'data': k, 'levels': np.linspace(0, 5, 100), 'ticks': np.linspace(0, 5, 7),\
-             'title': f'Simulation $k$ at time {snapshot}$s$ [$m^2/s^2$]', 'scientific': False},
-            {'data': omega, 'levels': np.linspace(0, 3.2, 100), 'ticks': np.linspace(0, 3.2, 7),\
-             'title': f'Simulation $\omega$ at time {snapshot}$s$ [$s⁻¹$]', 'scientific': False},
-            {'data': c, 'levels': np.linspace(0, 6e-5, 100), 'ticks': np.linspace(0, 6e-5, 7),\
-             'title': f'Simulation $c$ at time {snapshot}$s$ []', 'scientific': True} ]
+            {'data': u, 'levels': np.linspace(-6, 20, 200), 'ticks': np.linspace(-6, 18, 7),\
+             'title': f'Relative error $u$ at time {snapshot}$s$ [$m/s$]', 'scientific': False},
+            {'data': v, 'levels': np.linspace(-9, 9, 200), 'ticks': np.linspace(-9, 9, 7),\
+             'title': f'Relative error $v$ at time {snapshot}$s$ [$m/s$]', 'scientific': False},
+            {'data': p, 'levels': np.linspace(-160, 60, 200), 'ticks': np.linspace(-160, 60, 7),\
+             'title': f'Relative error $p$ at time {snapshot}$s$ [pa]', 'scientific': False},
+            {'data': k, 'levels': np.linspace(0, 5, 200), 'ticks': np.linspace(0, 5, 7),\
+             'title': f'Relative error $k$ at time {snapshot}$s$ [$m^2/s^2$]', 'scientific': False},
+            {'data': omega, 'levels': np.linspace(0, 3.2, 200), 'ticks': np.linspace(0, 3.2, 7),\
+             'title': f'Relative error $\omega$ at time {snapshot}$s$ [$s⁻¹$]', 'scientific': False},
+            {'data': c, 'levels': np.linspace(0, 6e-5, 200), 'ticks': np.linspace(0, 6e-5, 7),\
+             'title': f'Relative error $c$ at time {snapshot}$s$ []', 'scientific': True} ]
+        '''
+        plot_details = [
+            {'data': u, 'levels': np.linspace(0, 1, 100), 'ticks':
+             np.linspace(0, 1, 7),\
+             'title': f'Relative error $u$ at time {snapshot}$s$ [$m/s$]', 'scientific': False},
+            {'data': v, 'levels': np.linspace(0, 1, 100), 'ticks':
+             np.linspace(0, 1, 7),\
+             'title': f'Relative error $v$ at time {snapshot}$s$ [$m/s$]', 'scientific': False},
+            {'data': p, 'levels': np.linspace(0, 1, 100), 'ticks':
+             np.linspace(0, 1, 7),\
+             'title': f'Relative error $p$ at time {snapshot}$s$ [pa]', 'scientific': False},
+            {'data': k, 'levels': np.linspace(0, 1, 100), 'ticks':
+             np.linspace(0, 1, 7),\
+             'title': f'Relative error $k$ at time {snapshot}$s$ [$m^2/s^2$]', 'scientific': False},
+            {'data': omega, 'levels': np.linspace(0, 1, 100), 'ticks':
+             np.linspace(0, 1, 7),\
+             'title': f'Relative error $\omega$ at time {snapshot}$s$ [$s⁻¹$]', 'scientific': False},
+            {'data': c, 'levels': np.linspace(0, 1, 100), 'ticks':
+             np.linspace(0, 1, 7),\
+             'title': f'Relative error $c$ at time {snapshot}$s$ []', 'scientific': True} ]
+        '''
 
         # Plotting
         kk = 1
@@ -208,14 +229,26 @@ def create_animation(models, dataset, start_time, end_time, simulation,\
         plot_data = dataset.get_plotting_data(time_step, simulation).to(device)
         plot_inputs, plot_outputs = prepare_inputs_outputs(plot_data)
         x,y,t,Re,theta = plot_inputs
-        u_, v_, p_, k_, omega_, c_ = plot_outputs
-#       with torch.no_grad():
-#         u, v, p, k, omega, c = models[(time_step-1)//10](torch.cat([x, y, t, Re, theta], dim=1))
+        print('x.shape',x.shape)
+#       u_, v_, p_, k_, omega_, c_ = plot_outputs
+        with torch.no_grad():
+          u, v, p, k, omega, c = models[0](torch.cat([x, y, t, Re, theta], dim=1))
+
         # Plot the fields
 
+ #       fig = plot_fields(x, y,
+#         torch.abs((u-u_.squeeze())/9.0),
+#         torch.abs((v-v_.squeeze())/9.0),
+#         torch.abs((p-p_.squeeze())/100),
+#         torch.abs((k-k_.squeeze())/8.1),
+#         torch.abs((omega-omega_.squeeze())/3),
+#         torch.abs((c-c_.squeeze())/5e-5), time_step, simulation, name=f"fig_{time_step}", save_dir=save_dir, U_star = 9.0)
+
 #       fig = plot_fields(x, y, torch.abs(u-u_.squeeze()), torch.abs(v-v_.squeeze()), torch.abs(p-p_.squeeze()), torch.abs(k-k_.squeeze()), torch.abs(omega-omega_.squeeze()), torch.abs(c-c_.squeeze()), time_step, simulation, name=f"fig_{time_step}", save_dir=save_dir, U_star = 9.0)
-#       fig = plot_fields(x, y, u, v, p, k, omega_, c_, time_step, simulation, name=f"fig_j9_sim4_{time_step}", save_dir=save_dir, U_star = 9.0)
-        fig = plot_fields(x, y, u_.squeeze(), v_.squeeze(), p_.squeeze(), k_.squeeze(), omega_.squeeze(), c_.squeeze(), time_step, simulation, name=f"fig_j6_{time_step}", save_dir=save_dir, U_star = 9.0)
+
+        fig = plot_fields(x, y, u, v, p, k, omega, c, time_step, simulation, name=f"fig_single_100s_{time_step}", save_dir=save_dir, U_star = 9.0)
+
+#       fig = plot_fields(x, y, u_.squeeze(), v_.squeeze(), p_.squeeze(), k_.squeeze(), omega_.squeeze(), c_.squeeze(), time_step, simulation, name=f"fig_j6_{time_step}", save_dir=save_dir, U_star = 9.0)
         plt.close(fig)  # Close the figure to save memory
 
         # Save the figure as an image
@@ -227,7 +260,7 @@ def create_animation(models, dataset, start_time, end_time, simulation,\
 #   images[0].save(os.path.join(save_dir, filename), save_all=True, append_images=images[1:], duration=200, loop=0, optimize=False, quality=100)
 
 models = [load_model(model_file) for model_file in model_files]
-data_array = np.load("../data/training_3.npy")
+data_array = np.load("../data/single.npy")
 dataset = CustomDataset(data_array)
-create_animation(models, dataset, start_time=1, end_time=100, simulation=2)
+create_animation(models, dataset, start_time=1, end_time=100, simulation=1)
 #sim1: north_east_leak

@@ -38,6 +38,7 @@ def preprocess_data(file_paths):
         all_data_files.append((coords, u_ref, v_ref, p_ref, k_ref, omega_ref, c_ref, Re, theta))
         if num_timesteps is None:
             num_timesteps = u_ref.shape[0]
+            print('num_timesteps', num_timesteps)
 
     all_data = []
 
@@ -56,12 +57,16 @@ def preprocess_data(file_paths):
                 all_data.append((coords[p, 0], coords[p, 1], t, Re, theta,
                                  u_ref[t, p], v_ref[t, p], p_ref[t, p],
                                  k_ref[t, p], omega_ref[t, p], c_ref[t, p]))
-
     return np.array(all_data)
 
 # Preprocess data
+'''
 file_paths = ["../data/unsteady_emh.npy", "../data/unsteady_nmh.npy",
               "../data/unsteady_nwmh.npy"]#, "../data/unsteady_nemh.npy"]
+file_paths = ["../data/unsteady_wmh.npy", "../data/unsteady_nmh.npy",
+              "../data/unsteady_swmh.npy", "../data/unsteady_smh.npy"]
+'''
+file_paths = ["../data/unsteady_emh.npy"]
 data_array = preprocess_data(file_paths)
 # Save preprocessed data
-np.save("../data/training_3.npy", data_array)
+np.save("../data/single.npy", data_array)
