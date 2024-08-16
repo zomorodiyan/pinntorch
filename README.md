@@ -12,10 +12,14 @@ The main function that sets up the training environment, initializes the model, 
 ## Running the Code
 
 1. Ensure you have Python and PyTorch installed.
-2. Load the dataset (`data/preprocessed_clipped.npy`).
-3. Run the script using the command:
+2. Load the dataset (`data/single.npy`).
+   or generate it from dataset (`data/unsteady_emh.npy`):
+      ```sh
+   python preprocess.py
+      
+4. From src directory run the script using the command:
    ```sh
-   python main.py
+   python code38.py
    
 ## Dependencies
 
