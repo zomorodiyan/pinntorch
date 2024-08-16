@@ -20,7 +20,10 @@ The main function that sets up the training environment, initializes the model, 
 4. From src directory run the script using the command:
    ```sh
    python code38.py
-   
+5. By minimal modifications in (`code38.py`), (un)commenting in (`src/preprocess.npy`) the execuation can be ran for different subset of scenarios and tested by the command:
+   ```sh
+   python error.py
+
 ## Dependencies
 
 - Python 3.6+
